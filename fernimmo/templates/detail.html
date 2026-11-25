@@ -1,45 +1,71 @@
 {% extends "base.html" %}
-{% block title %}{{ l.title }} – FernImmo{% endblock %}
+{% from "_social.html" import social %}
+{% block title %}#{{ l.id }} {{ l.title }} – FernImmo{% endblock %}
 {% block content %}{% set d = l.data %}
 <p><a href="/">← zurück</a></p>
-<div class="card">
-  <h2 style="margin-top:0">{{ l.title }}</h2>
+<div class="card" id="l{{ l.id }}">
+  <h2 style="margin-top:0"><span class="lid">#{{ l.id }}</span> {{ l.title }}</h2>
   <p>
     <span class="badge b-{{ l.match_level }}">{{ l.match_level }}</span>
     <span class="badge fw-{{ l.fernwaerme }}">Fernwärme: {{ (l.fernwaerme or "?").replace("_"," ") }}</span>
+    {% if not l.active %}<span class="badge fw-nein">offline</span>{% endif %}
     {% for p in l.matched_profiles %}<span class="badge">{{ p }}</span> {% endfor %}
     <a href="{{ l.url }}" target="_blank" rel="noopener">Zum Inserat auf {{ l.source }} ↗</a>
   </p>
   {% if l.match_reasons %}<p class="muted">Bewertung: {{ l.match_reasons|join("; ") }}</p>{% endif %}
   {% if duplicate %}<p class="muted">Vermutlich identisch mit <a href="/listing/{{ duplicate.id }}">#{{ duplicate.id }} ({{ duplicate.source }})</a></p>{% endif %}
-  <form method="post" action="/listing/{{ l.id }}/status" style="display:flex;gap:8px;align-items:center">
+  <form method="post" action="/listing/{{ l.id }}/status" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
     <input type="hidden" name="back" value="/listing/{{ l.id }}">
     Status: <select name="status">{% for s in statuses %}<option {% if l.status==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select>
     <button>Speichern</button>
   </form>
+  {{ social(l, user, here, open=True) }}
+</div>
+
+<div class="card" style="margin-top:12px" id="verlauf">
+  <h3 style="margin-top:0">Änderungsverlauf</h3>
+  <p class="muted small">Erfasst bei jedem erneuten Abruf des Inserats (Treffer und gelikte Inserate werden regelmäßig neu geladen).
+    Zuletzt abgerufen: {{ l.last_fetched|dt or "–" }}.</p>
+  <div class="table-wrap">
+  <table class="changes">
+    <tr><th>Datum / Uhrzeit</th><th>Merkmal</th><th>Vorher</th><th>Nachher</th></tr>
+    {% for c in changes %}
+    <tr class="ch-{{ c.direction or c.field }}">
+      <td style="white-space:nowrap">{{ c.ts|dt }}</td>
+      <td>{% if c.direction == "down" %}📉 {% elif c.direction == "up" %}📈 {% endif %}{{ c.label }}</td>
+      {% if c.field == "raw_text" %}
+      <td colspan="2"><details><summary>Beschreibung geändert – anzeigen</summary>
+        <div class="desc-diff"><div><b class="small muted">vorher</b><pre>{{ c.old or "–" }}</pre></div>
+        <div><b class="small muted">nachher</b><pre>{{ c.new }}</pre></div></div></details></td>
+      {% else %}
+      <td class="muted">{{ c.old or "–" }}</td><td><b>{{ c.new or "–" }}</b></td>
+      {% endif %}
+    </tr>
+    {% else %}<tr><td colspan="4" class="muted">Noch keine Einträge.</td></tr>{% endfor %}
+  </table>
+  </div>
 </div>
 
 <div class="card" style="margin-top:12px">
   <h3 style="margin-top:0">Erkannte Merkmale</h3>
+  <div class="table-wrap">
   <table>
     <tr><th>Vermarktung</th><td>{{ l.listing_type or "?" }}</td><th>Adresse</th><td>{{ l.address or d.plz or "?" }}</td></tr>
     <tr><th>Zimmer</th><td>{{ d.rooms|num("", 1) }}</td><th>Wohnfläche</th><td>{{ d.area|num(" m²", 1) }}</td></tr>
+    <tr><th>Kaufpreis</th><td>{{ d.purchase_price|num(" €") }}</td><th>€/m²</th><td>{{ d.price_per_sqm|num(" €") }}</td></tr>
+    <tr><th>Hausgeld</th><td>{{ d.hausgeld|num(" €") }}</td><th>Baujahr</th><td>{{ d.year or "?" }}</td></tr>
+    {% if d.rent_cold or d.rent_warm %}
     <tr><th>Kaltmiete</th><td>{{ d.rent_cold|num(" €") }}</td><th>Warmmiete</th><td>{{ d.rent_warm|num(" €") }}</td></tr>
-    <tr><th>Nebenkosten</th><td>{{ d.service_charges|num(" €") }}</td><th>Heizkosten</th><td>{{ d.heating_costs|num(" €") }}</td></tr>
-    <tr><th>Kaufpreis</th><td>{{ d.purchase_price|num(" €") }}</td><th>Hausgeld</th><td>{{ d.hausgeld|num(" €") }}</td></tr>
-    <tr><th>€/m²</th><td>{{ d.price_per_sqm|num(" €", 2) }}</td><th>Baujahr</th><td>{{ d.year or "?" }}</td></tr>
+    {% endif %}
     <tr><th>Energieträger</th><td>{{ d.heating_sources|heating or "?" }}
         {% if d.heating_from %}<span class="muted">({{ d.heating_from }})</span>{% endif %}</td>
         <th>Heizungsart</th><td>{{ d.heating_systems|join(", ") or "?" }}</td></tr>
     <tr><th>Energieklasse</th><td>{{ d.energy_class or "?" }}</td><th>Energiekennwert</th><td>{{ d.energy_value|num(" kWh/(m²·a)", 1) }}</td></tr>
     <tr><th>Etage</th><td>{{ d.floor if d.floor is not none else "?" }}{% if d.top_floor %} (DG){% endif %}</td><th>Verfügbar ab</th><td>{{ d.available_from or "?" }}</td></tr>
     <tr><th>Ausstattung</th><td>{{ d.features|join(", ") or "–" }}</td><th>Hinweise</th><td>{{ d.flags|join(", ") or "–" }}</td></tr>
-    <tr><th>Erstmals gesehen</th><td>{{ l.first_seen }}</td><th>Zuletzt gesehen</th><td>{{ l.last_seen }}{% if not l.active %} (inaktiv){% endif %}</td></tr>
+    <tr><th>Erstmals gesehen</th><td>{{ l.first_seen|dt }}</td><th>Zuletzt in Suche</th><td>{{ l.last_seen|dt }}</td></tr>
   </table>
-  {% if history|length > 1 %}
-  <h4>Preisverlauf</h4>
-  <table>{% for h in history %}<tr><td>{{ h.ts[:16].replace("T"," ") }}</td><td>{{ h.price|num(" €") }}</td></tr>{% endfor %}</table>
-  {% endif %}
+  </div>
 </div>
 
 {% if l.structured %}

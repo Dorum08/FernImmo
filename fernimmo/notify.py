@@ -46,6 +46,8 @@ def format_message(l: dict[str, Any], kind: str = "neu", old_price: float | None
         extra.append(f"Energieklasse {d['energy_class']}")
     if d.get("floor") is not None:
         extra.append(f"{d['floor']}. OG" if d["floor"] > 0 else "EG")
+    if l.get("listing_type") == "kauf" and d.get("hausgeld"):
+        extra.append(f"Hausgeld {fmt_num(d['hausgeld'], ' €')}")
     if d.get("price_per_sqm"):
         extra.append(f"{fmt_num(d['price_per_sqm'], ' €/m²', 2)}")
     if extra:
@@ -54,7 +56,9 @@ def format_message(l: dict[str, Any], kind: str = "neu", old_price: float | None
         lines.append(f"📍 {l['address']}")
     if l.get("match_reasons"):
         lines.append("Hinweis: " + "; ".join(l["match_reasons"]))
-    lines.append(f"Quelle: {l['source']}")
+    if d.get("flags"):
+        lines.append("⚠️ " + ", ".join(d["flags"]))
+    lines.append(f"FernImmo-ID #{l['id']} · Quelle: {l['source']}")
     lines.append(l["url"])
     return lines[0], "\n".join(lines)
 

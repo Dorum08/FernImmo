@@ -1,10 +1,10 @@
-"""SQLite-Speicher für Inserate, Preisverlauf und Laufprotokoll."""
+"""SQLite-Speicher: Inserate, Änderungsverlauf, Likes, Kommentare, Laufprotokoll."""
 from __future__ import annotations
 
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS listings (
     image_url TEXT,
     first_seen TEXT,
     last_seen TEXT,
+    last_fetched TEXT,
     notified_at TEXT,
     active INTEGER DEFAULT 1,
     UNIQUE(source, source_id)
@@ -48,6 +49,31 @@ CREATE TABLE IF NOT EXISTS price_history (
     ts TEXT NOT NULL,
     price REAL
 );
+CREATE TABLE IF NOT EXISTS changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    field TEXT NOT NULL,
+    label TEXT NOT NULL,
+    old TEXT,
+    new TEXT,
+    direction TEXT            -- 'down' | 'up' | NULL (für Preise/Zahlen)
+);
+CREATE INDEX IF NOT EXISTS idx_changes_listing ON changes(listing_id, ts);
+CREATE TABLE IF NOT EXISTS likes (
+    listing_id INTEGER NOT NULL,
+    user TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    PRIMARY KEY (listing_id, user)
+);
+CREATE TABLE IF NOT EXISTS comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL,
+    user TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    text TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_comments_listing ON comments(listing_id, ts);
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     started TEXT,
@@ -59,6 +85,30 @@ CREATE TABLE IF NOT EXISTS runs (
     error TEXT
 );
 """
+
+# Spalten, die nachträglich dazugekommen sind (Migration bestehender Datenbanken)
+MIGRATIONS = {"listings": {"last_fetched": "TEXT"}}
+
+# Merkmale, deren Änderung im Verlauf protokolliert wird: Schlüssel -> (Bezeichnung, Einheit)
+TRACKED_DATA = {
+    "purchase_price": ("Kaufpreis", " €"),
+    "rent_cold": ("Kaltmiete", " €"),
+    "rent_warm": ("Warmmiete", " €"),
+    "hausgeld": ("Hausgeld", " €"),
+    "service_charges": ("Nebenkosten", " €"),
+    "area": ("Wohnfläche", " m²"),
+    "rooms": ("Zimmer", ""),
+    "year": ("Baujahr", ""),
+    "floor": ("Etage", ""),
+    "energy_class": ("Energieklasse", ""),
+    "energy_value": ("Energiekennwert", " kWh/(m²·a)"),
+    "heating_sources": ("Energieträger", ""),
+    "available_from": ("Verfügbar ab", ""),
+    "features": ("Ausstattung", ""),
+    "flags": ("Hinweise", ""),
+}
+PRICE_FIELDS = ("purchase_price", "rent_cold")
+TRACKED_COLUMNS = {"title": "Titel", "address": "Adresse", "raw_text": "Beschreibung"}
 
 
 def now() -> str:
@@ -72,14 +122,56 @@ def fingerprint(data: dict[str, Any], price: float | None) -> str | None:
     return f"{data.get('plz') or '?'}|{round(data['area'])}|{round(price / 10) * 10}|{data.get('rooms') or '?'}"
 
 
+def _fmt(value: Any, unit: str = "") -> str | None:
+    if value is None or value == [] or value == "":
+        return None
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    if isinstance(value, float):
+        digits = 0 if value.is_integer() else (1 if unit != " €" else 2)
+        s = f"{value:,.{digits}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return s + unit
+    return f"{value}{unit}"
+
+
+def diff_listing(old: dict, new_data: dict, new_cols: dict) -> list[dict]:
+    """Vergleicht gespeicherten Stand mit neuem Abruf und liefert Änderungen."""
+    out = []
+    old_data = old.get("data") or {}
+    for key, (label, unit) in TRACKED_DATA.items():
+        a, b = old_data.get(key), new_data.get(key)
+        if isinstance(a, list) or isinstance(b, list):
+            if sorted(a or []) == sorted(b or []):
+                continue
+        elif isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            if abs(a - b) < 0.01:
+                continue
+        elif a == b or (a in (None, "") and b in (None, "")):
+            continue
+        direction = None
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            direction = "down" if b < a else "up"
+        out.append(dict(field=key, label=label, old=_fmt(a, unit), new=_fmt(b, unit), direction=direction))
+    for col, label in TRACKED_COLUMNS.items():
+        a, b = (old.get(col) or "").strip(), (new_cols.get(col) or "").strip()
+        if a != b and b:
+            out.append(dict(field=col, label=label, old=a or None, new=b, direction=None))
+    return out
+
+
 class DB:
     def __init__(self, path: str | Path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         with self.lock:
             self.conn.executescript(SCHEMA)
+            for table, cols in MIGRATIONS.items():
+                have = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+                for col, typ in cols.items():
+                    if col not in have:
+                        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
             self.conn.commit()
 
     # ------------------------------------------------------------------ util
@@ -93,18 +185,40 @@ class DB:
         with self.lock:
             return self.conn.execute(sql, params).fetchall()
 
+    def add_change(self, lid: int, field: str, label: str, old: str | None, new: str | None,
+                   direction: str | None = None, ts: str | None = None) -> None:
+        self._exec(
+            "INSERT INTO changes(listing_id, ts, field, label, old, new, direction) VALUES (?,?,?,?,?,?,?)",
+            (lid, ts or now(), field, label, old, new, direction),
+        )
+
     # -------------------------------------------------------------- listings
     def known_ids(self, source: str) -> set[str]:
         return {r["source_id"] for r in self._query("SELECT source_id FROM listings WHERE source=?", (source,))}
 
     def touch(self, source: str, source_ids: list[str]) -> None:
+        """Markiert Inserate als in der Suche gesehen; wieder aufgetauchte werden protokolliert."""
         ts = now()
-        with self.lock:
-            self.conn.executemany(
-                "UPDATE listings SET last_seen=?, active=1 WHERE source=? AND source_id=?",
-                [(ts, source, sid) for sid in source_ids],
-            )
-            self.conn.commit()
+        for sid in source_ids:
+            rows = self._query("SELECT id, active FROM listings WHERE source=? AND source_id=?", (source, sid))
+            if not rows:
+                continue
+            if not rows[0]["active"]:
+                self.add_change(rows[0]["id"], "online", "Status", "offline", "wieder online", ts=ts)
+            self._exec("UPDATE listings SET last_seen=?, active=1 WHERE id=?", (ts, rows[0]["id"]))
+
+    def due_for_refresh(self, source: str, hours: float, limit: int) -> list[dict]:
+        """Aktive, relevante Inserate (Treffer oder geliked), die länger nicht neu geladen wurden."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
+        rows = self._query(
+            """SELECT id, source_id, url, listing_type FROM listings
+               WHERE source=? AND active=1 AND status<>'ausgeblendet'
+                 AND (match_level<>'none' OR id IN (SELECT listing_id FROM likes))
+                 AND COALESCE(last_fetched, first_seen) <= ?
+               ORDER BY COALESCE(last_fetched, first_seen) ASC LIMIT ?""",
+            (source, cutoff, limit),
+        )
+        return [dict(r) for r in rows]
 
     def find_duplicate(self, fp: str | None, source: str) -> int | None:
         if not fp:
@@ -115,12 +229,13 @@ class DB:
         )
         return rows[0]["id"] if rows else None
 
-    def upsert(self, l: Listing, structured: dict[str, str], reasons: list[str]) -> tuple[int, bool, float | None]:
-        """Speichert ein Inserat. Liefert (id, neu?, alter_preis)."""
+    def upsert(self, l: Listing, structured: dict[str, str], reasons: list[str],
+               track_changes: bool = True) -> tuple[int, bool, list[dict]]:
+        """Speichert ein Inserat. Liefert (id, neu?, Änderungen gegenüber dem letzten Stand)."""
         price = l.price
         fp = fingerprint(l.data, price)
         ts = now()
-        existing = self._query("SELECT id, price FROM listings WHERE source=? AND source_id=?", (l.source, l.source_id))
+        existing = self._query("SELECT * FROM listings WHERE source=? AND source_id=?", (l.source, l.source_id))
         vals = dict(
             source=l.source, source_id=l.source_id, url=l.url, title=l.title, address=l.address,
             listing_type=l.listing_type, raw_text=l.raw_text, structured=json.dumps(structured, ensure_ascii=False),
@@ -131,33 +246,51 @@ class DB:
             match_reasons=json.dumps(reasons, ensure_ascii=False), image_url=l.image_url, ts=ts,
         )
         if existing:
-            lid, old_price = existing[0]["id"], existing[0]["price"]
-            self._exec(
-                """UPDATE listings SET url=:url, title=:title, address=:address, listing_type=:listing_type,
-                raw_text=:raw_text, structured=:structured, data=:data, price=:price, rooms=:rooms, area=:area,
-                year=:year, fernwaerme=:fernwaerme, plz=:plz, fingerprint=:fingerprint, match_level=:match_level,
-                matched_profiles=:matched_profiles, match_reasons=:match_reasons, image_url=:image_url,
-                last_seen=:ts, active=1 WHERE id=:id""",
-                {**vals, "id": lid},
-            )
-            if price and old_price and abs(price - old_price) >= 1:
-                self._exec("INSERT INTO price_history(listing_id, ts, price) VALUES (?,?,?)", (lid, ts, price))
-                return lid, False, old_price
-            return lid, False, None
+            old = _row(existing[0])
+            lid = old["id"]
+            changes = diff_listing(old, l.data, {"title": l.title, "address": l.address, "raw_text": l.raw_text}) \
+                if track_changes else []
+            with self.lock:
+                self.conn.execute(
+                    """UPDATE listings SET url=:url, title=:title, address=:address, listing_type=:listing_type,
+                    raw_text=:raw_text, structured=:structured, data=:data, price=:price, rooms=:rooms, area=:area,
+                    year=:year, fernwaerme=:fernwaerme, plz=:plz, fingerprint=:fingerprint, match_level=:match_level,
+                    matched_profiles=:matched_profiles, match_reasons=:match_reasons, image_url=:image_url,
+                    last_seen=:ts, last_fetched=:ts, active=1 WHERE id=:id""",
+                    {**vals, "id": lid},
+                )
+                if not old["active"] and track_changes:
+                    changes.insert(0, dict(field="online", label="Status", old="offline", new="wieder online",
+                                           direction=None))
+                for c in changes:
+                    self.conn.execute(
+                        "INSERT INTO changes(listing_id, ts, field, label, old, new, direction) VALUES (?,?,?,?,?,?,?)",
+                        (lid, ts, c["field"], c["label"], c["old"], c["new"], c["direction"]),
+                    )
+                if price and old["price"] and abs(price - old["price"]) >= 1:
+                    self.conn.execute("INSERT INTO price_history(listing_id, ts, price) VALUES (?,?,?)",
+                                      (lid, ts, price))
+                self.conn.commit()
+            for c in changes:
+                c["old_price"] = old["price"]
+            return lid, False, changes
         vals["duplicate_of"] = self.find_duplicate(fp, l.source)
         cur = self._exec(
             """INSERT INTO listings(source, source_id, url, title, address, listing_type, raw_text, structured,
             data, price, rooms, area, year, fernwaerme, plz, fingerprint, duplicate_of, match_level,
-            matched_profiles, match_reasons, image_url, first_seen, last_seen)
+            matched_profiles, match_reasons, image_url, first_seen, last_seen, last_fetched)
             VALUES (:source, :source_id, :url, :title, :address, :listing_type, :raw_text, :structured, :data,
             :price, :rooms, :area, :year, :fernwaerme, :plz, :fingerprint, :duplicate_of, :match_level,
-            :matched_profiles, :match_reasons, :image_url, :ts, :ts)""",
+            :matched_profiles, :match_reasons, :image_url, :ts, :ts, :ts)""",
             vals,
         )
         lid = cur.lastrowid
+        unit = " €"
+        self.add_change(lid, "created", "Inserat", None,
+                        "erstmals gefunden" + (f" – Preis {_fmt(float(price), unit)}" if price else ""), ts=ts)
         if price:
             self._exec("INSERT INTO price_history(listing_id, ts, price) VALUES (?,?,?)", (lid, ts, price))
-        return lid, True, None
+        return lid, True, []
 
     def mark_notified(self, lid: int) -> None:
         self._exec("UPDATE listings SET notified_at=? WHERE id=?", (now(), lid))
@@ -165,49 +298,106 @@ class DB:
     def set_status(self, lid: int, status: str) -> None:
         self._exec("UPDATE listings SET status=? WHERE id=?", (status, lid))
 
-    def mark_inactive(self, source: str, older_than: str) -> None:
-        self._exec("UPDATE listings SET active=0 WHERE source=? AND last_seen<?", (source, older_than))
+    def mark_offline(self, lid: int, reason: str = "Inserat nicht mehr abrufbar") -> None:
+        rows = self._query("SELECT active FROM listings WHERE id=?", (lid,))
+        if rows and rows[0]["active"]:
+            self._exec("UPDATE listings SET active=0, last_fetched=? WHERE id=?", (now(), lid))
+            self.add_change(lid, "offline", "Status", "online", reason)
 
-    def get(self, lid: int) -> dict | None:
+    def mark_inactive(self, source: str, older_than: str) -> None:
+        for r in self._query("SELECT id FROM listings WHERE source=? AND active=1 AND last_seen<?",
+                             (source, older_than)):
+            self.mark_offline(r["id"], "seit Tagen nicht mehr in der Suche")
+
+    def get(self, lid: int, user: str | None = None) -> dict | None:
         rows = self._query("SELECT * FROM listings WHERE id=?", (lid,))
-        return _row(rows[0]) if rows else None
+        if not rows:
+            return None
+        d = _row(rows[0])
+        self._attach_social([d], user)
+        return d
 
     def price_history(self, lid: int) -> list[dict]:
         return [dict(r) for r in self._query("SELECT ts, price FROM price_history WHERE listing_id=? ORDER BY ts", (lid,))]
 
+    def changes(self, lid: int) -> list[dict]:
+        return [dict(r) for r in self._query(
+            "SELECT * FROM changes WHERE listing_id=? ORDER BY ts DESC, id DESC", (lid,))]
+
     def search(self, *, match: str | None = None, fernwaerme: str | None = None, source: str | None = None,
                status: str | None = None, listing_type: str | None = None, active_only: bool = True,
                hide_duplicates: bool = True, q: str | None = None, sort: str = "first_seen",
-               limit: int = 300) -> list[dict]:
+               liked: bool = False, user: str | None = None, limit: int = 300) -> list[dict]:
         where, params = [], []
-        if match == "treffer":
-            where.append("match_level IN ('voll','teilweise')")
-        elif match:
-            where.append("match_level=?"); params.append(match)
-        if fernwaerme:
-            where.append("fernwaerme=?"); params.append(fernwaerme)
-        if source:
-            where.append("source=?"); params.append(source)
-        if status:
-            where.append("status=?"); params.append(status)
+        if q and q.strip().lstrip("#").isdigit():
+            # Suche nach FernImmo-ID: alle übrigen Filter ignorieren
+            where.append("id=?"); params.append(int(q.strip().lstrip("#")))
         else:
-            where.append("status<>'ausgeblendet'")
-        if listing_type:
-            where.append("listing_type=?"); params.append(listing_type)
-        if active_only:
-            where.append("active=1")
-        if hide_duplicates:
-            where.append("duplicate_of IS NULL")
-        if q:
-            where.append("(title LIKE ? OR raw_text LIKE ? OR address LIKE ?)"); params += [f"%{q}%"] * 3
+            if match == "treffer":
+                where.append("match_level IN ('voll','teilweise')")
+            elif match:
+                where.append("match_level=?"); params.append(match)
+            if fernwaerme:
+                where.append("fernwaerme=?"); params.append(fernwaerme)
+            if source:
+                where.append("source=?"); params.append(source)
+            if status:
+                where.append("status=?"); params.append(status)
+            else:
+                where.append("status<>'ausgeblendet'")
+            if listing_type:
+                where.append("listing_type=?"); params.append(listing_type)
+            if active_only:
+                where.append("active=1")
+            if hide_duplicates:
+                where.append("duplicate_of IS NULL")
+            if liked:
+                where.append("id IN (SELECT listing_id FROM likes)")
+            if q:
+                where.append("(title LIKE ? OR raw_text LIKE ? OR address LIKE ?)"); params += [f"%{q}%"] * 3
         order = {
             "first_seen": "first_seen DESC", "price": "price IS NULL, price ASC",
             "area": "area IS NULL, area DESC", "ppsqm": "(price/area) IS NULL, price/area ASC",
+            "likes": "(SELECT COUNT(*) FROM likes WHERE listing_id=listings.id) DESC, first_seen DESC",
+            "changed": "(SELECT MAX(ts) FROM changes WHERE listing_id=listings.id AND field<>'created') IS NULL, "
+                       "(SELECT MAX(ts) FROM changes WHERE listing_id=listings.id AND field<>'created') DESC",
         }.get(sort, "first_seen DESC")
         sql = "SELECT * FROM listings" + (" WHERE " + " AND ".join(where) if where else "")
         sql += f" ORDER BY {order} LIMIT ?"
         params.append(limit)
-        return [_row(r) for r in self._query(sql, tuple(params))]
+        rows = [_row(r) for r in self._query(sql, tuple(params))]
+        self._attach_social(rows, user)
+        return rows
+
+    def _attach_social(self, rows: list[dict], user: str | None) -> None:
+        """Hängt Likes, Kommentare und letzte Änderung an die Zeilen an."""
+        if not rows:
+            return
+        ids = [r["id"] for r in rows]
+        ph = ",".join("?" * len(ids))
+        likes: dict[int, list[str]] = {}
+        for r in self._query(f"SELECT listing_id, user FROM likes WHERE listing_id IN ({ph}) ORDER BY ts", ids):
+            likes.setdefault(r["listing_id"], []).append(r["user"])
+        comments: dict[int, list[dict]] = {}
+        for r in self._query(f"SELECT * FROM comments WHERE listing_id IN ({ph}) ORDER BY ts, id", ids):
+            comments.setdefault(r["listing_id"], []).append(dict(r))
+        changes: dict[int, dict] = {}
+        counts: dict[int, int] = {}
+        for r in self._query(
+                f"""SELECT * FROM changes WHERE listing_id IN ({ph}) AND field<>'created'
+                    ORDER BY ts DESC, id DESC""", ids):
+            # Hinweis auf der Übersicht: letzte Preisänderung hat Vorrang, sonst letzte Änderung
+            cur = changes.get(r["listing_id"])
+            is_price = r["field"] in PRICE_FIELDS
+            if cur is None or (is_price and cur["field"] not in PRICE_FIELDS):
+                changes[r["listing_id"]] = dict(r)
+            counts[r["listing_id"]] = counts.get(r["listing_id"], 0) + 1
+        for r in rows:
+            r["likes"] = likes.get(r["id"], [])
+            r["liked"] = user in r["likes"]
+            r["comments"] = comments.get(r["id"], [])
+            r["last_change"] = changes.get(r["id"])
+            r["change_count"] = counts.get(r["id"], 0)
 
     def all_for_reprocess(self) -> list[dict]:
         return [_row(r) for r in self._query("SELECT * FROM listings")]
@@ -215,9 +405,29 @@ class DB:
     def stats(self) -> dict:
         r = self._query(
             """SELECT COUNT(*) total, SUM(match_level='voll') voll, SUM(match_level='teilweise') teilweise,
-            SUM(fernwaerme='ja') fw FROM listings WHERE active=1 AND duplicate_of IS NULL"""
+            SUM(fernwaerme='ja') fw,
+            (SELECT COUNT(DISTINCT listing_id) FROM likes) liked
+            FROM listings WHERE active=1 AND duplicate_of IS NULL"""
         )[0]
         return dict(r)
+
+    # --------------------------------------------------- likes & kommentare
+    def toggle_like(self, lid: int, user: str) -> bool:
+        """Schaltet das Like des Nutzers um; liefert den neuen Zustand."""
+        with self.lock:
+            cur = self.conn.execute("DELETE FROM likes WHERE listing_id=? AND user=?", (lid, user))
+            liked = cur.rowcount == 0
+            if liked:
+                self.conn.execute("INSERT INTO likes(listing_id, user, ts) VALUES (?,?,?)", (lid, user, now()))
+            self.conn.commit()
+        return liked
+
+    def add_comment(self, lid: int, user: str, text: str) -> int:
+        return self._exec("INSERT INTO comments(listing_id, user, ts, text) VALUES (?,?,?,?)",
+                          (lid, user, now(), text.strip()[:4000])).lastrowid
+
+    def delete_comment(self, cid: int, user: str) -> bool:
+        return self._exec("DELETE FROM comments WHERE id=? AND user=?", (cid, user)).rowcount > 0
 
     # ------------------------------------------------------------------ runs
     def log_run(self, source: str, started: str, found: int, new: int, matches: int, error: str | None) -> None:

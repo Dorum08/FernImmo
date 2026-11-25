@@ -1,10 +1,12 @@
 {% extends "base.html" %}
+{% from "_social.html" import social %}
 {% block content %}
 <div class="stats">
   <div class="card"><span class="muted">Aktive Inserate</span><b>{{ stats.total or 0 }}</b></div>
   <div class="card"><span class="muted">Volltreffer</span><b class="b-voll">{{ stats.voll or 0 }}</b></div>
   <div class="card"><span class="muted">Mögliche Treffer</span><b class="b-teilweise">{{ stats.teilweise or 0 }}</b></div>
   <div class="card"><span class="muted">Mit Fernwärme</span><b>{{ stats.fw or 0 }}</b></div>
+  <div class="card"><span class="muted">Gelikt</span><b class="liked-count">{{ stats.liked or 0 }}</b></div>
 </div>
 {% for r in runs %}{% if r.error %}<p class="card fw-nein">⚠️ Letzter Lauf {{ r.source }}: {{ r.error }}</p>{% endif %}{% endfor %}
 
@@ -15,47 +17,56 @@
   <label>Fernwärme<select name="fernwaerme">
     {% for v,t in [("","egal"),("ja","ja"),("unbekannt","unbekannt"),("eher_nein","eher nein"),("nein","nein")] %}
     <option value="{{v}}" {% if f.fernwaerme==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
-  <label>Art<select name="listing_type">
-    {% for v,t in [("","alle"),("miete","Miete"),("kauf","Kauf")] %}
-    <option value="{{v}}" {% if f.listing_type==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
   <label>Quelle<select name="source"><option value="">alle</option>
     {% for s in sources %}<option {% if f.source==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select></label>
   <label>Status<select name="status"><option value="">alle außer ausgeblendet</option>
     {% for s in statuses %}<option {% if f.status==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select></label>
   <label>Sortierung<select name="sort">
-    {% for v,t in [("first_seen","Neueste"),("price","Preis ↑"),("ppsqm","€/m² ↑"),("area","Fläche ↓")] %}
+    {% for v,t in [("first_seen","Neueste"),("changed","Zuletzt geändert"),("likes","Meiste Likes"),("price","Preis ↑"),("ppsqm","€/m² ↑"),("area","Fläche ↓")] %}
     <option value="{{v}}" {% if f.sort==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
-  <label>Suche<input name="q" value="{{ f.q }}" placeholder="z.B. Gostenhof"></label>
-  <label><span><input type="checkbox" name="inactive" value="1" {% if f.inactive %}checked{% endif %}> auch inaktive</span>
+  <label>Suche / ID<input name="q" value="{{ f.q }}" placeholder="z.B. Gostenhof oder #12"></label>
+  <label><span><input type="checkbox" name="liked" value="1" {% if f.liked %}checked{% endif %}> nur gelikte</span>
+         <span><input type="checkbox" name="inactive" value="1" {% if f.inactive %}checked{% endif %}> auch offline</span>
          <span><input type="checkbox" name="dupes" value="1" {% if f.dupes %}checked{% endif %}> Dubletten</span></label>
   <button>Filtern</button>
 </form>
 
 <div class="list">
 {% for l in rows %}{% set d = l.data %}
-  <div class="card item">
+  <div class="card item" id="l{{ l.id }}">
     {% if l.image_url %}<img src="{{ l.image_url }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% else %}<img alt="">{% endif %}
-    <div>
-      <h3><a href="/listing/{{ l.id }}">{{ l.title or "(ohne Titel)" }}</a></h3>
+    <div class="item-main">
+      <h3><a class="lid" href="/listing/{{ l.id }}">#{{ l.id }}</a> <a href="/listing/{{ l.id }}">{{ l.title or "(ohne Titel)" }}</a></h3>
       <div class="facts">
         <span><b>{{ d.rooms|num("", 1 if (d.rooms or 0) % 1 else 0) }}</b> Zi.</span>
         <span><b>{{ d.area|num(" m²") }}</b></span>
-        <span><b>{{ l.price|num(" €") }}</b> {{ "Kauf" if l.listing_type=="kauf" else "kalt" }}</span>
-        {% if d.price_per_sqm %}<span>{{ d.price_per_sqm|num(" €/m²", 2) }}</span>{% endif %}
+        <span><b>{{ l.price|num(" €") }}</b> {{ "Kaufpreis" if l.listing_type=="kauf" else "kalt" }}</span>
+        {% if d.price_per_sqm %}<span>{{ d.price_per_sqm|num(" €/m²") }}</span>{% endif %}
+        {% if d.hausgeld %}<span>Hausgeld {{ d.hausgeld|num(" €") }}</span>{% endif %}
         {% if d.year %}<span>Bj. {{ d.year }}</span>{% endif %}
         {% if d.energy_class %}<span>Klasse {{ d.energy_class }}</span>{% endif %}
         <span>{{ d.heating_sources|heating if d.heating_sources else "Heizung ?" }}</span>
       </div>
       <div class="facts" style="margin-top:4px">
         {% if l.address %}<span>📍 {{ l.address }}</span>{% elif d.plz %}<span>📍 {{ d.plz }}</span>{% endif %}
-        <span>{{ l.source }}</span><span>seit {{ l.first_seen[:10] }}</span>
-        {% if d.features %}<span>{{ d.features|join(" · ") }}</span>{% endif %}
+        <span>{{ l.source }}</span><span>seit {{ l.first_seen|dt("%d.%m.%Y") }}</span>
+        {% if d.flags %}<span class="fw-unbekannt">⚠ {{ d.flags|join(", ") }}</span>{% endif %}
       </div>
+      {% if l.last_change %}{% set c = l.last_change %}
+      <div class="facts change-hint">
+        <a href="/listing/{{ l.id }}#verlauf">
+          {% if c.direction == "down" %}📉{% elif c.direction == "up" %}📈{% else %}✏️{% endif %}
+          {{ c.label }}{% if c.field not in ("raw_text", "title") and c.new %}: {% if c.old %}{{ c.old }} → {% endif %}{{ c.new }}{% else %} geändert{% endif %}
+          · {{ c.ts|dt }}{% if l.change_count > 1 %} · {{ l.change_count }} Änderungen{% endif %}</a>
+      </div>
+      {% endif %}
+      {{ social(l, user, here) }}
     </div>
-    <div style="display:flex;flex-direction:column;gap:6px;align-items:end">
+    <div class="item-side">
       <span class="badge b-{{ l.match_level }}">{{ {"voll":"Volltreffer","teilweise":"möglich","none":"kein Treffer"}[l.match_level] }}</span>
       <span class="badge fw-{{ l.fernwaerme }}">FW: {{ (l.fernwaerme or "?").replace("_"," ") }}</span>
       {% if l.status != "neu" %}<span class="badge">{{ l.status }}</span>{% endif %}
+      {% if not l.active %}<span class="badge fw-nein">offline</span>{% endif %}
       <a href="{{ l.url }}" target="_blank" rel="noopener">Zum Inserat ↗</a>
     </div>
   </div>

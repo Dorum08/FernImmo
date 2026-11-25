@@ -6,6 +6,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from ..fetch import NotFoundError
 from ..models import RawListing
 from .base import SearchHit, Source, clean_soup, meta, text_of
 
@@ -37,6 +38,12 @@ class Kleinanzeigen(Source):
 
     def parse_detail(self, html: str, hit: SearchHit) -> RawListing:
         soup = clean_soup(html)
+        if not soup.select_one("#viewad-description-text"):
+            # Nur als gelöscht werten, wenn die Seite das ausdrücklich sagt – sonst könnte
+            # eine Layoutänderung alle Inserate fälschlich "offline" schalten.
+            if re.search(r"nicht mehr verfügbar|wurde gelöscht|nicht mehr aktiv|deaktiviert", html, re.I):
+                raise NotFoundError(f"Anzeige {hit.source_id} gelöscht oder deaktiviert")
+            return super().parse_detail(html, hit)
         title = text_of(soup.select_one("#viewad-title")) or meta(soup, "og:title") or ""
         price = text_of(soup.select_one("#viewad-price"))
         desc = text_of(soup.select_one("#viewad-description-text"))

@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from ..fetch import Fetcher
+from ..fetch import Fetcher, NotFoundError
 from ..models import RawListing
 
 log = logging.getLogger(__name__)
@@ -138,7 +138,12 @@ class Source:
                 purl = self.page_url(url, page)
                 if not purl:
                     break
-                html = self.fetcher.get(purl)
+                try:
+                    html = self.fetcher.get(purl)
+                except NotFoundError:
+                    # Folgeseite existiert nicht -> Ende dieser Suche
+                    log.info("[%s] %s nicht gefunden", self.name, purl)
+                    break
                 hits = self.search_hits(html, purl, ltype)
                 new = [h for h in hits if h.source_id not in all_hits]
                 log.info("[%s] %s: %d Treffer (%d neu)", self.name, purl, len(hits), len(new))

@@ -118,3 +118,12 @@ def test_purchase():
 
 def test_erdgeschoss():
     assert extract("Die Wohnung liegt im Erdgeschoss.")["floor"] == 0
+
+
+def test_kauf_flags():
+    d = extract("Die Wohnung ist vermietet, Jahresnettokaltmiete 7.200 €. Erbbaurecht bis 2080.")
+    assert "vermietet" in d["flags"] and "erbpacht" in d["flags"]
+    d = extract("Ideal als Kapitalanlage oder zur Eigennutzung, bezugsfrei, unvermietet.")
+    assert "vermietet" not in d["flags"]
+    assert "versteigerung" in extract("Zwangsversteigerung, Termin beim Amtsgericht")["flags"]
+    assert "versteigerung" not in extract("Makler GmbH, HRB 123 Amtsgericht Nürnberg")["flags"]

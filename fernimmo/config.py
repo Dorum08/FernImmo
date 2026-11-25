@@ -57,8 +57,12 @@ class Config:
         w = raw.get("web", {})
         self.web_host: str = w.get("host", "0.0.0.0")
         self.web_port: int = int(w.get("port", 8080))
-        self.web_user: str = w.get("username", "admin")
-        self.web_password: str = w.get("password", "")
+        # Mehrere Nutzer (für Likes/Kommentare): web.users {name: passwort}
+        users = dict(w.get("users") or {})
+        if w.get("password"):
+            users.setdefault(w.get("username", "admin"), w["password"])
+        self.web_users: dict[str, str] = {u: str(p) for u, p in users.items() if p}
+        self.timezone: str = raw.get("timezone", "Europe/Berlin")
 
     @classmethod
     def load(cls, path: str | Path) -> "Config":

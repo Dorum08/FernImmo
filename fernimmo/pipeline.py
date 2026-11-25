@@ -10,11 +10,12 @@ from datetime import datetime, timedelta, timezone
 from .config import Config
 from .db import DB, now
 from .extract import extract
-from .fetch import BlockedError, make_fetcher
+from .fetch import BlockedError, NotFoundError, make_fetcher
 from .matcher import best_match
 from .models import Listing, RawListing
 from .notify import Notifier, format_message
 from .sources import build_source
+from .sources.base import SearchHit
 
 log = logging.getLogger(__name__)
 
@@ -49,22 +50,30 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
         stats["found"] = len(hits)
         db.touch(src.name, [h.source_id for h in hits if h.source_id in known])
         todo = [h for h in hits if h.source_id not in known][: src.max_details]
-        # Bereits bekannte Inserate gelegentlich neu laden (Preisänderungen erkennen)
-        refresh_n = int(scfg.get("refresh_per_run", 3))
-        known_hits = [h for h in hits if h.source_id in known]
-        refresh = random.sample(known_hits, k=min(refresh_n, len(known_hits)))
+        # Bekannte Treffer und gelikte Inserate regelmäßig neu laden, damit
+        # Änderungen (Preis, Beschreibung, offline …) im Verlauf landen.
+        due = db.due_for_refresh(src.name, float(scfg.get("refresh_hours", 6)), int(scfg.get("refresh_per_run", 15)))
+        refresh = [SearchHit(r["source_id"], r["url"], r["listing_type"]) for r in due]
+        refresh_ids = {r["source_id"]: r["id"] for r in due}
         first_run_matches = []
         for hit in todo + refresh:
             try:
                 raw = src.fetch_detail(hit)
             except BlockedError:
                 raise
+            except NotFoundError as e:
+                if hit.source_id in refresh_ids:
+                    db.mark_offline(refresh_ids[hit.source_id])
+                log.info("[%s] %s", name, e)
+                continue
             except Exception as e:  # noqa: BLE001
                 log.warning("[%s] Detailseite %s fehlgeschlagen: %s", name, hit.url, e)
                 continue
             listing, reasons = evaluate(raw, cfg)
-            lid, is_new, old_price = db.upsert(listing, raw.structured, reasons)
+            lid, is_new, changes = db.upsert(listing, raw.structured, reasons)
             row = db.get(lid)
+            price_drop = next((c for c in changes if c["field"] in ("purchase_price", "rent_cold")
+                               and c["direction"] == "down"), None)
             if is_new:
                 stats["new"] += 1
             if listing.match_level == "none" or row.get("status") == "ausgeblendet":
@@ -78,9 +87,8 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
                 subject, body = format_message(row)
                 notifier.send(subject, body, row["url"])
                 db.mark_notified(lid)
-            elif old_price and row["price"] and row["price"] < old_price and cfg.notify_price_drops \
-                    and row.get("notified_at"):
-                subject, body = format_message(row, kind="preis", old_price=old_price)
+            elif price_drop and cfg.notify_price_drops and (row.get("notified_at") or row["likes"]):
+                subject, body = format_message(row, kind="preis", old_price=price_drop["old_price"])
                 notifier.send(subject, body, row["url"])
         if first_run_matches:
             notifier.send(
@@ -122,7 +130,7 @@ def reprocess(cfg: Config, db: DB) -> int:
             listing_type=row["listing_type"], image_url=row["image_url"],
         )
         listing, reasons = evaluate(raw, cfg)
-        db.upsert(listing, raw.structured, reasons)
+        db.upsert(listing, raw.structured, reasons, track_changes=False)
         n += 1
     return n
 

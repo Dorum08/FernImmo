@@ -7,7 +7,7 @@ Ausstattung …), gleicht sie mit deinen Suchprofilen ab und meldet passende
 Angebote per Telegram, ntfy oder E-Mail. Eine Weboberfläche zeigt alle Inserate
 mit Filtern, Preisverlauf und Merkliste.
 
-Voreingestellt ist die Suche nach **1–2-Zimmer-Wohnungen in Nürnberg mit Fernwärme**.
+Voreingestellt ist die Suche nach **1–2-Zimmer-Eigentumswohnungen (Kauf) in Nürnberg mit Fernwärme**.
 
 ## Funktionen
 
@@ -15,11 +15,13 @@ Voreingestellt ist die Suche nach **1–2-Zimmer-Wohnungen in Nürnberg mit Fern
 |---|---|
 | **Quellen** | Kleinanzeigen, Immowelt, ImmoScout24 (optional, siehe unten), beliebige weitere Seiten über ein Link-Muster |
 | **Auswertung** | Wohnfläche, Zimmer, Kalt-/Warmmiete, Nebenkosten, Heizkosten, Kaufpreis, Hausgeld, €/m², Baujahr, Energieträger (Fernwärme, Nahwärme, Gas, Öl, Wärmepumpe, Pellets, Strom, BHKW), Heizungsart, Energieklasse und Kennwert, Etage, PLZ, „verfügbar ab“, Ausstattung (Balkon, EBK, Aufzug, Keller, Stellplatz …) |
-| **Ausschlüsse** | Tauschwohnungen, WG-Zimmer, Gesuche, Zwischenmiete/befristet, WBS, Seniorenwohnen, eigene Stichwörter |
+| **Hinweise & Ausschlüsse** | Gesuche, Zwangsversteigerungen (standardmäßig ausgeschlossen); erkannt und angezeigt werden außerdem Erbpacht, vermietete Wohnungen, Denkmalschutz, provisionsfrei; eigene Stichwörter möglich |
 | **Treffer-Stufen** | **voll**: alle Kriterien erfüllt und Fernwärme bestätigt. **teilweise**: nichts spricht dagegen, aber z. B. die Heizung steht nicht im Inserat. Wird ein anderer Energieträger genannt, fällt das Inserat raus. |
-| **Meldungen** | Telegram, ntfy (Push aufs Handy ohne Konto), E-Mail; Preissenkungen bereits gemeldeter Inserate |
+| **IDs, Likes, Kommentare** | Jede Wohnung hat eine feste FernImmo-ID (#12; auch in den Meldungen, über die Suche direkt aufrufbar). Auf der Übersicht kann jede angemeldete Person liken und kommentieren; man sieht, wer was gelikt und geschrieben hat. |
+| **Änderungsverlauf** | Treffer und gelikte Wohnungen werden regelmäßig neu abgerufen. Jede Änderung (Kaufpreis, Hausgeld, Fläche, Energiedaten, Titel, Beschreibung, offline/wieder online …) wird mit Datum und Uhrzeit auf der Detailseite protokolliert, Preissenkungen grün, Erhöhungen rot. |
+| **Meldungen** | Telegram, ntfy (Push aufs Handy ohne Konto), E-Mail; Preissenkungen bei gemeldeten oder gelikten Wohnungen |
 | **Dubletten** | Dasselbe Objekt auf mehreren Portalen wird erkannt (PLZ, Fläche, Preis, Zimmer) und nur einmal gemeldet |
-| **Weboberfläche** | Filter, Sortierung nach Preis und €/m², Status (Favorit, kontaktiert, Besichtigung, ausgeblendet), Preisverlauf, Laufprotokoll, „Jetzt suchen“-Knopf, JSON-API unter `/api/listings` |
+| **Weboberfläche** | Filter (u. a. „nur gelikte“), Sortierung nach Preis, €/m², Likes oder letzter Änderung, Status (Favorit, kontaktiert, Besichtigung, ausgeblendet), Laufprotokoll, „Jetzt suchen“-Knopf, JSON-API unter `/api/listings` und `/api/listings/<id>/changes` |
 
 ## Installation mit Docker (empfohlen)
 
@@ -36,6 +38,11 @@ absichtlich nur lokal gebunden. Von außen erreichst du sie per SSH-Tunnel
 (`ssh -L 8080:127.0.0.1:8080 dein-server`), VPN (z. B. WireGuard oder Tailscale)
 oder über einen Reverse-Proxy mit HTTPS (Caddy, nginx, Traefik). Setze in `.env`
 auf jeden Fall `WEB_PASSWORD`.
+
+**Mehrere Personen** (z. B. für gemeinsames Liken und Kommentieren): in `config.yaml`
+unter `web.users` weitere Namen eintragen, etwa `zweite_person: ${WEB_PASSWORD_2}`,
+und das Passwort in `.env` setzen. Likes und Kommentare werden dem angemeldeten
+Namen zugeordnet; eigene Kommentare lassen sich löschen.
 
 Nützliche Befehle:
 
@@ -85,13 +92,15 @@ Einzelmeldungen für den Altbestand. Das lässt sich mit `notify.first_run: true
 Alles steht in `config.yaml` unter `profiles`. Mehrere Profile sind möglich, zum
 Beispiel eines für Miete und eines für Kauf. Wichtige Schalter:
 
+- `listing_types: [kauf]`: nur Kaufangebote (`[miete]` oder `[miete, kauf]` geht auch; dann
+  auch die Such-URLs der Portale entsprechend anpassen)
 - `rooms_min`, `rooms_max`: 1 bis 2 (mit `2.5` werden 2,5-Zimmer-Wohnungen eingeschlossen)
-- `price_max`: Kaltmiete bzw. Kaufpreis; `rent_warm_max` für die Warmmiete
+- `price_max`: maximaler Kaufpreis
 - `heating_required: [fernwaerme]`: mit `[fernwaerme, nahwaerme]` zählt auch Nahwärme
 - `unknown_heating: teilweise`: Inserate ohne Heizungsangabe trotzdem melden (gelb). In der Praxis
   fehlt die Angabe oft, besonders bei Kleinanzeigen. Mit `ignorieren` bekommst du nur bestätigte Fernwärme.
 - `plz: ["904"]`: nur Nürnberger Stadtgebiet
-- `exclude_flags`, `exclude_keywords`, `required_features`
+- `exclude_flags`: z. B. `[gesuch, versteigerung, erbpacht, vermietet]`; dazu `exclude_keywords`, `required_features`
 
 ## Suchseiten (Quellen-URLs)
 
@@ -116,6 +125,10 @@ steht in `config.example.yaml`.
   und als Hinweis auf der Startseite.
 - **Wenn ein Portal sein Layout ändert,** prüfe mit `python -m fernimmo check <Inserat-URL>`,
   was erkannt wird. Die Selektoren stehen in `fernimmo/sources/*.py`.
+- **Änderungsverlauf:** Erfasst wird, was beim erneuten Abruf anders ist. Neu geladen
+  werden Treffer und gelikte Wohnungen, spätestens alle `refresh_hours` Stunden (Standard 6)
+  und höchstens `refresh_per_run` pro Lauf. Ist ein Inserat gelöscht oder lange nicht mehr
+  in der Suche, wird es als „offline“ vermerkt (Filter „auch offline“).
 - **Abrufrate:** Standard ist alle ca. 20 Minuten mit Pausen von 3–7 s zwischen den
   Seiten und Ruhezeit nachts. Kürzere Intervalle erhöhen das Risiko, geblockt zu werden.
 - **Rechtliches:** Die Nutzungsbedingungen der Portale verbieten automatisiertes
@@ -143,7 +156,7 @@ fernimmo/
   extract.py    Merkmalserkennung aus Text und Label-Wert-Paaren
   matcher.py    Abgleich mit Suchprofilen (voll / teilweise / kein Treffer)
   pipeline.py   Suchlauf, Speichern, Melden, Zeitplan
-  db.py         SQLite (Inserate, Preisverlauf, Läufe)
+  db.py         SQLite (Inserate, Änderungsverlauf, Likes, Kommentare, Läufe)
   notify.py     Telegram / ntfy / E-Mail
   web.py        Weboberfläche (FastAPI + Jinja)
 ```

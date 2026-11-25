@@ -61,6 +61,13 @@ EXCLUDE_HINTS = {
     "befristet": r"\bbefristet|zwischenmiete|untermiete",
     "wg": r"\bwg-?zimmer|\bwg\b|mitbewohner",
     "senioren": r"seniorenwohn|betreutes wohnen|ab 60 jahre",
+    # beim Kauf relevant
+    "versteigerung": r"zwangsversteigerung|\bversteigerung|versteigerungstermin",
+    "erbpacht": r"erbpacht|erbbaurecht|erbbauzins",
+    "vermietet": r"(?<!un)vermietet(?:e)?\s+(?:wohnung|einheit|an\b)|derzeit vermietet|aktuell vermietet|"
+                 r"ist vermietet|mietverh(?:ä|ae)ltnis besteht|jahresnettokaltmiete|mieteinnahmen",
+    "provisionsfrei": r"provisionsfrei|ohne makler|keine k(?:ä|ae)uferprovision|von privat",
+    "denkmal": r"denkmalschutz|denkmalgesch(?:ü|ue)tzt|baudenkmal",
 }
 
 FLOOR_WORDS = {

@@ -1,0 +1,32 @@
+{# Like-Knopf und Kommentare für ein Inserat. open=True klappt die Kommentare auf. #}
+{% macro social(l, user, back, open=False) %}
+<div class="social">
+  <form method="post" action="/listing/{{ l.id }}/like" class="like-form">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button class="like {% if l.liked %}on{% endif %}" title="{{ l.likes|join(', ') if l.likes else 'Noch keine Likes' }}">
+      {{ "♥" if l.liked else "♡" }} <span>{{ l.likes|length }}</span>
+    </button>
+  </form>
+  {% if l.likes %}<span class="muted small">{{ l.likes|join(", ") }}</span>{% endif %}
+  <details class="comments" {% if open %}open{% endif %}>
+    <summary>💬 {{ l.comments|length }} Kommentar{{ "" if l.comments|length == 1 else "e" }}</summary>
+    {% for c in l.comments %}
+    <div class="comment">
+      <div class="small muted"><b>{{ c.user }}</b> · {{ c.ts|dt }}
+        {% if c.user == user %}
+        <form method="post" action="/comment/{{ c.id }}/delete" style="display:inline">
+          <input type="hidden" name="lid" value="{{ l.id }}"><input type="hidden" name="back" value="{{ back }}">
+          <button class="link" title="Kommentar löschen" onclick="return confirm('Kommentar löschen?')">löschen</button>
+        </form>{% endif %}
+      </div>
+      <div class="comment-text">{{ c.text }}</div>
+    </div>
+    {% endfor %}
+    <form method="post" action="/listing/{{ l.id }}/comment" class="comment-form">
+      <input type="hidden" name="back" value="{{ back }}">
+      <textarea name="text" rows="2" required placeholder="Kommentar als {{ user }} …"></textarea>
+      <button>Senden</button>
+    </form>
+  </details>
+</div>
+{% endmacro %}

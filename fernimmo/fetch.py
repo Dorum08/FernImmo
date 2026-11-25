@@ -24,6 +24,10 @@ class BlockedError(RuntimeError):
     """Das Portal hat die Anfrage als Bot erkannt."""
 
 
+class NotFoundError(RuntimeError):
+    """Seite existiert nicht mehr (Inserat gelöscht)."""
+
+
 class Fetcher:
     def get(self, url: str) -> str:  # pragma: no cover - Interface
         raise NotImplementedError
@@ -67,10 +71,12 @@ class HttpFetcher(Fetcher):
             self._wait()
             try:
                 r = self.client.get(url)
+                if r.status_code in (404, 410):
+                    raise NotFoundError(f"{r.status_code} bei {url}")
                 _check_blocked(url, r.status_code, r.text)
                 r.raise_for_status()
                 return r.text
-            except BlockedError:
+            except (BlockedError, NotFoundError):
                 raise
             except httpx.HTTPError as e:
                 last_exc = e
@@ -109,6 +115,8 @@ class PlaywrightFetcher(Fetcher):
         except Exception:  # noqa: BLE001 - networkidle ist nur ein Bonus
             pass
         html = self.page.content()
+        if resp and resp.status in (404, 410):
+            raise NotFoundError(f"{resp.status} bei {url}")
         _check_blocked(url, resp.status if resp else 200, html)
         return html
 
