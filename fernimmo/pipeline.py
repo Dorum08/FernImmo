@@ -1,0 +1,160 @@
+"""Ein Suchlauf: Quellen abfragen, neue Inserate auswerten, speichern, melden."""
+from __future__ import annotations
+
+import logging
+import random
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+
+from .config import Config
+from .db import DB, now
+from .extract import extract
+from .fetch import BlockedError, make_fetcher
+from .matcher import best_match
+from .models import Listing, RawListing
+from .notify import Notifier, format_message
+from .sources import build_source
+
+log = logging.getLogger(__name__)
+
+
+def evaluate(raw: RawListing, cfg: Config) -> tuple[Listing, list[str]]:
+    data = extract(raw.text, raw.title, raw.structured)
+    # Generischer "Preis" (z.B. Kleinanzeigen) = Kaltmiete bzw. Kaufpreis
+    if data.get("price_generic"):
+        if raw.listing_type == "miete" and not data.get("rent_cold"):
+            data["rent_cold"] = data["price_generic"]
+        elif raw.listing_type == "kauf" and not data.get("purchase_price"):
+            data["purchase_price"] = data["price_generic"]
+    full_text = f"{raw.title}\n{raw.text}"
+    level, names, reasons = best_match(cfg.profiles, raw.listing_type, data, full_text)
+    listing = Listing(
+        id=None, source=raw.source, source_id=raw.source_id, url=raw.url, title=raw.title,
+        address=raw.address, listing_type=raw.listing_type, data=data, match_level=level,
+        matched_profiles=names, image_url=raw.image_url, raw_text=raw.text,
+    )
+    return listing, reasons
+
+
+def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -> dict:
+    started = now()
+    stats = {"found": 0, "new": 0, "matches": 0, "error": None}
+    fetcher = make_fetcher(scfg.get("fetcher", cfg.fetcher), cfg.delay, cfg.user_agent, cfg.proxy)
+    try:
+        src = build_source(name, scfg, fetcher)
+        known = db.known_ids(src.name)
+        first_run = not known
+        hits = src.search()
+        stats["found"] = len(hits)
+        db.touch(src.name, [h.source_id for h in hits if h.source_id in known])
+        todo = [h for h in hits if h.source_id not in known][: src.max_details]
+        # Bereits bekannte Inserate gelegentlich neu laden (Preisänderungen erkennen)
+        refresh_n = int(scfg.get("refresh_per_run", 3))
+        known_hits = [h for h in hits if h.source_id in known]
+        refresh = random.sample(known_hits, k=min(refresh_n, len(known_hits)))
+        first_run_matches = []
+        for hit in todo + refresh:
+            try:
+                raw = src.fetch_detail(hit)
+            except BlockedError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                log.warning("[%s] Detailseite %s fehlgeschlagen: %s", name, hit.url, e)
+                continue
+            listing, reasons = evaluate(raw, cfg)
+            lid, is_new, old_price = db.upsert(listing, raw.structured, reasons)
+            row = db.get(lid)
+            if is_new:
+                stats["new"] += 1
+            if listing.match_level == "none" or row.get("status") == "ausgeblendet":
+                continue
+            if is_new:
+                stats["matches"] += 1
+            if is_new and row["duplicate_of"] is None and listing.match_level in cfg.notify_levels:
+                if first_run and not cfg.notify_first_run:
+                    first_run_matches.append(row)
+                    continue
+                subject, body = format_message(row)
+                notifier.send(subject, body, row["url"])
+                db.mark_notified(lid)
+            elif old_price and row["price"] and row["price"] < old_price and cfg.notify_price_drops \
+                    and row.get("notified_at"):
+                subject, body = format_message(row, kind="preis", old_price=old_price)
+                notifier.send(subject, body, row["url"])
+        if first_run_matches:
+            notifier.send(
+                f"FernImmo: erster Lauf {name}",
+                f"Erster Suchlauf auf {name}: {len(first_run_matches)} passende Inserate gefunden. "
+                "Diese wurden nicht einzeln gemeldet – siehe Weboberfläche. Ab jetzt kommt jedes neue Inserat einzeln.",
+            )
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=int(scfg.get("inactive_after_days", 7)))).isoformat()
+        db.mark_inactive(src.name, cutoff)
+    except BlockedError as e:
+        stats["error"] = f"{e} – evtl. fetcher: playwright, längere Pausen oder seltener abfragen"
+        log.error("[%s] %s", name, stats["error"])
+    except Exception as e:  # noqa: BLE001
+        stats["error"] = str(e)
+        log.exception("[%s] Lauf fehlgeschlagen", name)
+    finally:
+        fetcher.close()
+        db.log_run(name, started, stats["found"], stats["new"], stats["matches"], stats["error"])
+    log.info("[%s] gefunden=%d neu=%d treffer=%d", name, stats["found"], stats["new"], stats["matches"])
+    return stats
+
+
+def run_once(cfg: Config, db: DB, notifier: Notifier, only: str | None = None) -> dict[str, dict]:
+    results = {}
+    for name, scfg in cfg.sources.items():
+        if only and name != only:
+            continue
+        results[name] = run_source(name, scfg, cfg, db, notifier)
+    return results
+
+
+def reprocess(cfg: Config, db: DB) -> int:
+    """Wertet alle gespeicherten Inserate neu aus (nach Änderungen an Profilen/Regeln)."""
+    n = 0
+    for row in db.all_for_reprocess():
+        raw = RawListing(
+            source=row["source"], source_id=row["source_id"], url=row["url"], title=row["title"] or "",
+            text=row["raw_text"] or "", structured=row["structured"] or {}, address=row["address"] or "",
+            listing_type=row["listing_type"], image_url=row["image_url"],
+        )
+        listing, reasons = evaluate(raw, cfg)
+        db.upsert(listing, raw.structured, reasons)
+        n += 1
+    return n
+
+
+def in_quiet_hours(cfg: Config) -> bool:
+    if not cfg.quiet_hours:
+        return False
+    start, end = cfg.quiet_hours
+    h = datetime.now().hour
+    return start <= h < end if start < end else (h >= start or h < end)
+
+
+class Scheduler(threading.Thread):
+    def __init__(self, cfg: Config, db: DB, notifier: Notifier):
+        super().__init__(daemon=True, name="scheduler")
+        self.cfg, self.db, self.notifier = cfg, db, notifier
+        self.trigger = threading.Event()
+        self.running = threading.Lock()
+
+    def run_now(self) -> None:
+        self.trigger.set()
+
+    def run(self) -> None:
+        while True:
+            if in_quiet_hours(self.cfg) and not self.trigger.is_set():
+                log.info("Ruhezeit – kein Suchlauf")
+            else:
+                with self.running:
+                    run_once(self.cfg, self.db, self.notifier)
+            self.trigger.clear()
+            # ±25 % Zufall, damit die Abrufe nicht im starren Takt kommen
+            wait = self.cfg.interval_minutes * 60 * random.uniform(0.75, 1.25)
+            log.info("Nächster Lauf in %.0f Minuten", wait / 60)
+            self.trigger.wait(timeout=wait)
+            time.sleep(1)

@@ -1,0 +1,110 @@
+# FernImmo – Konfiguration
+# Kopieren nach config.yaml und anpassen. ${VAR} bzw. ${VAR:-standard} wird aus
+# Umgebungsvariablen (.env) ersetzt – so landen Passwörter nicht in dieser Datei.
+
+db_path: data/fernimmo.db
+interval_minutes: 20          # Abstand der Suchläufe (±25 % Zufall)
+quiet_hours: [1, 6]           # zwischen 1 und 6 Uhr nicht suchen (weglassen = immer)
+
+fetch:
+  fetcher: http               # http | playwright (echter Browser, siehe README)
+  delay_seconds: [3, 7]       # zufällige Pause zwischen zwei Seitenabrufen
+  # proxy: http://user:pass@host:port
+
+# ---------------------------------------------------------------------------
+# Quellen. Am zuverlässigsten: Suche im Browser auf dem Portal einstellen
+# (Nürnberg, Wohnung, mieten/kaufen, ggf. Zimmer/Preis) und die URL hier
+# einfügen. Die Feinfilterung (Fernwärme etc.) macht FernImmo selbst.
+# Die Beispiel-URLs unten bitte einmal im Browser öffnen und prüfen, ob sie
+# wirklich Nürnberg zeigen (Orts-IDs der Portale ändern sich gelegentlich).
+# ---------------------------------------------------------------------------
+sources:
+  kleinanzeigen:
+    enabled: true
+    urls:
+      - url: https://www.kleinanzeigen.de/s-wohnung-mieten/nuernberg/anzeige:angebote/c203l976
+        type: miete
+      # - url: https://www.kleinanzeigen.de/s-wohnung-kaufen/nuernberg/anzeige:angebote/c196l976
+      #   type: kauf
+    max_pages: 3
+    max_details_per_run: 40   # max. neue Detailseiten pro Lauf
+
+  immowelt:
+    enabled: true
+    urls:
+      # Suche auf immowelt.de einstellen und URL aus der Adresszeile kopieren
+      - url: https://www.immowelt.de/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08DE6345&numberOfRoomsMax=2.5
+        type: miete
+    max_pages: 3
+    max_details_per_run: 40
+
+  immoscout24:
+    enabled: false            # starker Bot-Schutz – erst mit fetcher: playwright probieren
+    fetcher: playwright
+    urls:
+      - url: https://www.immobilienscout24.de/Suche/de/bayern/nuernberg/wohnung-mieten?numberofrooms=1.0-2.5
+        type: miete
+    max_pages: 2
+    max_details_per_run: 20
+
+  # Beliebige weitere Seite (z.B. Wohnungsbaugesellschaft) über Link-Muster:
+  # wbg:
+  #   type: generic
+  #   enabled: true
+  #   urls: [https://www.example.de/mietangebote]
+  #   link_pattern: '/immobilie/(\d+)'       # Regex, Gruppe 1 = eindeutige ID
+  #   content_selector: 'main'               # optional: CSS-Selektor für den Inseratstext
+  #   pagination: '{url}?page={page}'        # optional
+  #   type_default: miete
+
+# ---------------------------------------------------------------------------
+# Suchprofile. "voll" = alles erfüllt und Fernwärme bestätigt,
+# "teilweise" = nichts spricht dagegen, aber z.B. Heizung nicht angegeben.
+# ---------------------------------------------------------------------------
+profiles:
+  - name: Nürnberg 1–2 Zi. Fernwärme
+    listing_types: [miete]       # [miete], [kauf] oder [miete, kauf]
+    rooms_min: 1
+    rooms_max: 2.5               # 2,5 einschließen? sonst 2
+    # area_min: 30
+    # price_max: 900             # Kaltmiete bzw. Kaufpreis in €
+    # rent_warm_max: 1100
+    heating_required: [fernwaerme]
+    unknown_heating: teilweise   # teilweise = trotzdem melden (gelb) | ignorieren
+    plz: ["90"]                  # Nürnberg: 904xx; ["904"] für nur Stadtgebiet
+    exclude_flags: [tausch, wg, gesuch, befristet]   # außerdem möglich: wbs, senioren
+    exclude_keywords: []         # freie Stichwörter, z.B. ["Zwangsversteigerung"]
+    # required_features: [balkon]   # balkon, einbaukueche, aufzug, keller, stellplatz, ...
+
+# ---------------------------------------------------------------------------
+# Benachrichtigungen
+# ---------------------------------------------------------------------------
+notify:
+  levels: [voll, teilweise]   # welche Treffer gemeldet werden
+  price_drops: true           # Preissenkung bei bereits gemeldeten Inseraten melden
+  first_run: false            # beim allerersten Lauf nicht jeden Altbestand einzeln melden
+
+  telegram:
+    enabled: ${TELEGRAM_ENABLED:-false}
+    bot_token: ${TELEGRAM_BOT_TOKEN}
+    chat_id: ${TELEGRAM_CHAT_ID}
+
+  ntfy:
+    enabled: ${NTFY_ENABLED:-false}
+    server: https://ntfy.sh
+    topic: ${NTFY_TOPIC}        # langen, zufälligen Namen wählen!
+    # token: ${NTFY_TOKEN}
+
+  email:
+    enabled: ${EMAIL_ENABLED:-false}
+    host: ${SMTP_HOST}
+    port: 587
+    username: ${SMTP_USER}
+    password: ${SMTP_PASSWORD}
+    to: ${EMAIL_TO}
+
+web:
+  host: 0.0.0.0
+  port: 8080
+  username: admin
+  password: ${WEB_PASSWORD}     # leer = kein Login (nur hinter VPN/Reverse-Proxy!)

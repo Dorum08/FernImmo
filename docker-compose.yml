@@ -1,0 +1,14 @@
+services:
+  fernimmo:
+    build:
+      context: .
+      args:
+        PLAYWRIGHT: "0"        # "1" für Browser-Abruf (z.B. ImmoScout24)
+    container_name: fernimmo
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:8080:8080"  # nur lokal; von außen über Reverse-Proxy/VPN/SSH-Tunnel

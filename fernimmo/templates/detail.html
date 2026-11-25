@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ l.title }} – FernImmo{% endblock %}
+{% block content %}{% set d = l.data %}
+<p><a href="/">← zurück</a></p>
+<div class="card">
+  <h2 style="margin-top:0">{{ l.title }}</h2>
+  <p>
+    <span class="badge b-{{ l.match_level }}">{{ l.match_level }}</span>
+    <span class="badge fw-{{ l.fernwaerme }}">Fernwärme: {{ (l.fernwaerme or "?").replace("_"," ") }}</span>
+    {% for p in l.matched_profiles %}<span class="badge">{{ p }}</span> {% endfor %}
+    <a href="{{ l.url }}" target="_blank" rel="noopener">Zum Inserat auf {{ l.source }} ↗</a>
+  </p>
+  {% if l.match_reasons %}<p class="muted">Bewertung: {{ l.match_reasons|join("; ") }}</p>{% endif %}
+  {% if duplicate %}<p class="muted">Vermutlich identisch mit <a href="/listing/{{ duplicate.id }}">#{{ duplicate.id }} ({{ duplicate.source }})</a></p>{% endif %}
+  <form method="post" action="/listing/{{ l.id }}/status" style="display:flex;gap:8px;align-items:center">
+    <input type="hidden" name="back" value="/listing/{{ l.id }}">
+    Status: <select name="status">{% for s in statuses %}<option {% if l.status==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select>
+    <button>Speichern</button>
+  </form>
+</div>
+
+<div class="card" style="margin-top:12px">
+  <h3 style="margin-top:0">Erkannte Merkmale</h3>
+  <table>
+    <tr><th>Vermarktung</th><td>{{ l.listing_type or "?" }}</td><th>Adresse</th><td>{{ l.address or d.plz or "?" }}</td></tr>
+    <tr><th>Zimmer</th><td>{{ d.rooms|num("", 1) }}</td><th>Wohnfläche</th><td>{{ d.area|num(" m²", 1) }}</td></tr>
+    <tr><th>Kaltmiete</th><td>{{ d.rent_cold|num(" €") }}</td><th>Warmmiete</th><td>{{ d.rent_warm|num(" €") }}</td></tr>
+    <tr><th>Nebenkosten</th><td>{{ d.service_charges|num(" €") }}</td><th>Heizkosten</th><td>{{ d.heating_costs|num(" €") }}</td></tr>
+    <tr><th>Kaufpreis</th><td>{{ d.purchase_price|num(" €") }}</td><th>Hausgeld</th><td>{{ d.hausgeld|num(" €") }}</td></tr>
+    <tr><th>€/m²</th><td>{{ d.price_per_sqm|num(" €", 2) }}</td><th>Baujahr</th><td>{{ d.year or "?" }}</td></tr>
+    <tr><th>Energieträger</th><td>{{ d.heating_sources|heating or "?" }}
+        {% if d.heating_from %}<span class="muted">({{ d.heating_from }})</span>{% endif %}</td>
+        <th>Heizungsart</th><td>{{ d.heating_systems|join(", ") or "?" }}</td></tr>
+    <tr><th>Energieklasse</th><td>{{ d.energy_class or "?" }}</td><th>Energiekennwert</th><td>{{ d.energy_value|num(" kWh/(m²·a)", 1) }}</td></tr>
+    <tr><th>Etage</th><td>{{ d.floor if d.floor is not none else "?" }}{% if d.top_floor %} (DG){% endif %}</td><th>Verfügbar ab</th><td>{{ d.available_from or "?" }}</td></tr>
+    <tr><th>Ausstattung</th><td>{{ d.features|join(", ") or "–" }}</td><th>Hinweise</th><td>{{ d.flags|join(", ") or "–" }}</td></tr>
+    <tr><th>Erstmals gesehen</th><td>{{ l.first_seen }}</td><th>Zuletzt gesehen</th><td>{{ l.last_seen }}{% if not l.active %} (inaktiv){% endif %}</td></tr>
+  </table>
+  {% if history|length > 1 %}
+  <h4>Preisverlauf</h4>
+  <table>{% for h in history %}<tr><td>{{ h.ts[:16].replace("T"," ") }}</td><td>{{ h.price|num(" €") }}</td></tr>{% endfor %}</table>
+  {% endif %}
+</div>
+
+{% if l.structured %}
+<div class="card" style="margin-top:12px">
+  <h3 style="margin-top:0">Angaben im Inserat</h3>
+  <table>{% for k, v in l.structured.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</table>
+</div>
+{% endif %}
+<div class="card" style="margin-top:12px">
+  <h3 style="margin-top:0">Beschreibung</h3>
+  <pre>{{ l.raw_text }}</pre>
+</div>
+{% endblock %}

@@ -1,0 +1,17 @@
+# Alternative zu Docker: systemd-Dienst
+# Installation siehe README ("Ohne Docker").
+[Unit]
+Description=FernImmo Wohnungssuche
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=fernimmo
+WorkingDirectory=/opt/fernimmo
+EnvironmentFile=/opt/fernimmo/.env
+ExecStart=/opt/fernimmo/.venv/bin/python -m fernimmo -c /opt/fernimmo/config.yaml serve
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

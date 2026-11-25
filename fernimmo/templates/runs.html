@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Suchläufe</h2>
+{% if busy %}<p class="card b-teilweise">Ein Suchlauf läuft gerade …</p>{% endif %}
+<div class="card">
+<table>
+  <tr><th>Start (UTC)</th><th>Quelle</th><th>Gefunden</th><th>Neu</th><th>Treffer</th><th>Fehler</th></tr>
+  {% for r in runs %}
+  <tr><td>{{ r.started[:16].replace("T"," ") }}</td><td>{{ r.source }}</td><td>{{ r.found }}</td><td>{{ r.new }}</td>
+      <td>{{ r.matches }}</td><td class="fw-nein">{{ r.error or "" }}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">Noch keine Läufe.</td></tr>{% endfor %}
+</table>
+</div>
+{% endblock %}
