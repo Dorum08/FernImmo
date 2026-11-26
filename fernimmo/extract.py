@@ -144,7 +144,9 @@ def normalize_rooms(text: str) -> str:
     for w, n in _HALF_WORDS.items():
         t = re.sub(rf"\b{w}(?=[\s-]*(?:zimmer|zi\b|raum))", n + " ", t, flags=re.IGNORECASE)
     for w, n in _NUM_WORDS.items():
-        t = re.sub(rf"\b{w}[\s-]*(?=zimmer|raum)", n + "-", t, flags=re.IGNORECASE)
+        # "ein Zimmer mit Balkon" ist keine Zimmeranzahl – nur Einzimmer-/Ein-Zimmer- zählt
+        sep = "-?" if w == "ein" else r"[\s-]*"
+        t = re.sub(rf"\b{w}{sep}(?=zimmer|raum)", n + "-", t, flags=re.IGNORECASE)
     return t
 
 

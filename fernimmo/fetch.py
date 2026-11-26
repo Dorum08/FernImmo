@@ -14,9 +14,11 @@ DEFAULT_UA = (
     "Chrome/131.0.0.0 Safari/537.36"
 )
 
+# Nur eindeutige Sperrseiten-Merkmale – ein normales reCAPTCHA im Kontaktformular zählt nicht
 BLOCK_MARKERS = (
-    "ich bin kein roboter", "captcha", "access denied", "zugriff verweigert",
-    "please verify you are a human", "unusual traffic", "cf-challenge", "px-captcha",
+    "ich bin kein roboter", "access denied", "zugriff verweigert", "please verify you are a human",
+    "unusual traffic", "cf-challenge", "challenge-platform", "px-captcha", "captcha-delivery.com",
+    "attention required! | cloudflare", "_incapsula_resource",
 )
 
 

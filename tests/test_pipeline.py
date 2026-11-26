@@ -143,7 +143,7 @@ def test_change_history_and_price_drop(env):
 
     # Inserat wird gelöscht -> offline im Verlauf
     del fake.pages[URL_FW]
-    fake.pages[SEARCH_URL] = SEARCH.replace(f'data-adid="111"', 'data-adid="999"')
+    fake.pages[SEARCH_URL] = SEARCH.replace('data-adid="111"', 'data-adid="999"')
     pipeline.run_once(cfg, db, notifier)
     assert db.get(lid)["active"] == 0
     assert db.changes(lid)[0]["field"] == "offline"

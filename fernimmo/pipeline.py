@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 import random
 import threading
 import time
@@ -10,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from .config import Config
 from .db import DB, now
-from .extract import extract
+from .extract import extract, normalize_rooms
 from .geo import AreaFilter, Geocoder, plz_for_point, plz_state
 from .fetch import BlockedError, NotFoundError, make_fetcher
 from .matcher import best_match
@@ -63,9 +64,18 @@ def effective_profiles(cfg: Config, db: DB) -> list:
 def prefiltered(hit: SearchHit, cfg: Config, area: AreaFilter, profiles: list) -> bool:
     """True, wenn schon der Kurztext aus der Ergebnisliste klar gegen alle Profile spricht
     (z. B. falsche PLZ bei bundesweiter Suche, 4 Zimmer bei Suche nach 1–2). Spart Abrufe."""
-    if not hit.snippet:
+    if not hit.snippet or not profiles:
         return False
     data = extract(hit.snippet)
+    # Nur eindeutige Angaben verwenden: nennt die Kachel mehrere Zimmerzahlen, Flächen oder
+    # Preise (z. B. im Beschreibungsanriss), lieber die Detailseite laden als falsch aussortieren.
+    snip = normalize_rooms(hit.snippet)
+    if len(set(re.findall(r"(\d{1,2}(?:[.,]5)?)\s*-?\s*(?:zimmer|zi\b|zi\.)", snip, re.I))) > 1:
+        data["rooms"] = None
+    if len(set(re.findall(r"(\d{2,3}(?:[.,]\d+)?)\s*(?:m²|m2|qm)", snip, re.I))) > 1:
+        data["area"] = None
+    if len(set(re.findall(r"(\d{1,3}(?:\.\d{3})+|\d{5,7})(?:,\d+)?\s*(?:€|eur)", snip, re.I))) > 1:
+        data["purchase_price"] = data["price_generic"] = data["rent_cold"] = None
     level, _, _ = best_match(profiles, hit.listing_type, data, hit.snippet, area)
     return level == "none"
 
@@ -146,7 +156,14 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
                                and c["direction"] == "down"), None)
             if is_new:
                 stats["new"] += 1
-            if listing.match_level == "none" or row.get("status") == "ausgeblendet":
+            if row.get("status") == "ausgeblendet":
+                continue
+            # Preissenkung: bei gemeldeten Treffern und bei gelikten Wohnungen (auch ohne Treffer)
+            if price_drop and cfg.notify_price_drops and (row.get("notified_at") or row["likes"]):
+                subject, body = format_message(row, kind="preis", old_price=price_drop["old_price"],
+                                               calc=_calc(row, cfg))
+                notifier.send(subject, body, row["url"])
+            if listing.match_level == "none":
                 continue
             if is_new:
                 stats["matches"] += 1
@@ -157,16 +174,13 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
                 subject, body = format_message(row, calc=_calc(row, cfg))
                 notifier.send(subject, body, row["url"])
                 db.mark_notified(lid)
-            elif price_drop and cfg.notify_price_drops and (row.get("notified_at") or row["likes"]):
-                subject, body = format_message(row, kind="preis", old_price=price_drop["old_price"], calc=_calc(row, cfg))
-                notifier.send(subject, body, row["url"])
         if first_run_matches:
             notifier.send(
                 f"FernImmo: erster Lauf {name}",
                 f"Erster Suchlauf auf {name}: {len(first_run_matches)} passende Inserate gefunden. "
                 "Diese wurden nicht einzeln gemeldet – siehe Weboberfläche. Ab jetzt kommt jedes neue Inserat einzeln.",
             )
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=int(scfg.get("inactive_after_days", 7)))).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=int(scfg.get("inactive_after_days", 7)))).isoformat(timespec="seconds")
         db.mark_inactive(src.name, cutoff)
     except BlockedError as e:
         stats["error"] = f"{e} – evtl. fetcher: playwright, längere Pausen oder seltener abfragen"

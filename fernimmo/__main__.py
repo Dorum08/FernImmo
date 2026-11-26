@@ -92,6 +92,9 @@ def _check(cfg: Config, url: str, source: str | None) -> int:
     try:
         src = build_source(source, scfg, fetcher)
         raw = src.fetch_detail(SearchHit("check", url, guess_type(url)))
+    except Exception as e:  # noqa: BLE001 - verständliche Meldung statt Stacktrace
+        print(f"Abruf/Auswertung fehlgeschlagen ({source}): {e}", file=sys.stderr)
+        return 1
     finally:
         fetcher.close()
     listing, reasons = evaluate(raw, cfg)

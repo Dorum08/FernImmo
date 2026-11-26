@@ -93,7 +93,7 @@ sources:
 # OpenStreetMap (Nominatim) in Koordinaten umgerechnet – höchstens 1 Anfrage/s,
 # Ergebnisse werden gespeichert. Ohne Straße wird der PLZ-Mittelpunkt genommen.
 # Das Suchgebiet (PLZ-Auswahl, Freihand-Flächen) legst du in der Weboberfläche
-# unter "Suchgebiet" fest; es ersetzt dann die plz-Angabe der Profile.
+# unter "Suche" fest; es ersetzt dann die plz-Angabe der Profile.
 # ---------------------------------------------------------------------------
 geocoding:
   enabled: true

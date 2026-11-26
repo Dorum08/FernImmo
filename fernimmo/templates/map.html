@@ -37,8 +37,8 @@
 <script>
 (async () => {
   const map = FI.map("map", {{ center|tojson }}, {{ zoom }});
-  const [data, areaState, plz] = await Promise.all([
-    FI.json("/api/map?" + {{ query|tojson }}), FI.json("/api/areas"), FI.selectedFeatures([])]);
+  const [data, areaState] = await Promise.all([
+    FI.json("/api/map?" + {{ query|tojson }}), FI.json("/api/areas")]);
 
   // Suchgebiet: ausgewählte PLZ + gezeichnete Flächen
   L.geoJSON({type: "FeatureCollection", features: await FI.selectedFeatures(areaState.plz)},

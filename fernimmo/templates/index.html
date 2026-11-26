@@ -76,7 +76,7 @@
         {% if l.price_drops %}<span class="mkt-good">📉 {{ l.price_drops }}× gesenkt{% if l.price_delta_pct %} ({{ "%+.1f"|format(l.price_delta_pct) }} %){% endif %}</span>
         {% elif l.price_delta_pct %}<span>Preis {{ "%+.1f"|format(l.price_delta_pct) }} %</span>{% endif %}
         {% if l.relisted_of %}<span class="fw-unbekannt">♻️ wieder eingestellt (früher <a href="/listing/{{ l.relisted_of }}">#{{ l.relisted_of }}</a>)</span>{% endif %}
-        {% set c = calc_for(l) %}{% if c %}<span title="Rate {{ c.rate|num(' €') }} + Hausgeld {{ c.hausgeld|num(' €') }}; Vorgaben im Kostenrechner der Detailseite">💶 ≈ {{ c.belastung|num(" €") }}/Monat</span>{% endif %}
+        {% set c = calc_for(l) %}{% if c %}<span title="Rate {{ c.rate|num(' €') }} + Hausgeld {{ c.hausgeld|num(' €') }}; gerechnet mit den Vorgaben aus config.yaml (calculator) – eigene Werte im Kostenrechner der Detailseite">💶 ≈ {{ c.belastung|num(" €") }}/Monat</span>{% endif %}
       </div>
       {% if l.last_change %}{% set c = l.last_change %}
       <div class="facts change-hint">

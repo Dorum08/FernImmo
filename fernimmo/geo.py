@@ -262,15 +262,28 @@ class Geocoder:
         self.db.geocache_put(query, point)
         return point
 
+    @staticmethod
+    def _near_plz(point: tuple[float, float], plz: str | None) -> bool:
+        """Liegt das Geocoding-Ergebnis im (leicht erweiterten) Rahmen der PLZ? Schützt vor
+        Treffern in einer gleichnamigen Straße einer anderen Stadt."""
+        v = plz_index()["plz"].get(plz or "")
+        if not v:
+            return True
+        b, m = v["b"], 0.02
+        return b[0] - m <= point[0] <= b[2] + m and b[1] - m <= point[1] <= b[3] + m
+
     def locate(self, address: str, plz: str | None, portal_coords: tuple[float, float] | None
                ) -> tuple[float | None, float | None, str | None]:
         """Liefert (lat, lon, Genauigkeit). Genauigkeit: portal | adresse | plz."""
         if portal_coords:
             return portal_coords[0], portal_coords[1], "portal"
         if address and has_street(address):
-            q = address if (plz and plz in address) else f"{address}, {plz or self.city_hint}".rstrip(", ")
-            p = self.geocode(q)
-            if p:
+            # Ohne PLZ/Ort wäre "Hauptstr. 5" deutschlandweit mehrdeutig -> dann lieber nur PLZ-genau
+            has_place = bool(re.search(r"\b\d{5}\b", address)) or "," in address
+            q = address if (plz and plz in address) else f"{address}, {plz}" if plz else \
+                (address if has_place else (f"{address}, {self.city_hint}" if self.city_hint else None))
+            p = self.geocode(q) if q else None
+            if p and self._near_plz(p, plz):
                 return p[0], p[1], "adresse"
         c = plz_center(plz)
         if c:
