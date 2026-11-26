@@ -7,7 +7,6 @@ from fernimmo.db import DB
 from fernimmo.extract import extract
 from fernimmo.fetch import BlockedError, _check_blocked
 from fernimmo.geo import AreaFilter, Geocoder
-from fernimmo.matcher import Profile
 from fernimmo.sources.base import SearchHit
 
 from test_pipeline import URL_GAS, FakeFetcher, FakeNotifier, detail, make_cfg, pages
