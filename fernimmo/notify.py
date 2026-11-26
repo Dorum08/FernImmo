@@ -18,8 +18,8 @@ HEATING_NAMES = {
 
 
 def fmt_num(v, suffix="", digits=0) -> str:
-    if v is None:
-        return "?"
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return "?"   # None, fehlendes Feld (Jinja-Undefined) o. Ä.
     s = f"{v:,.{digits}f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return s + suffix
 

@@ -16,6 +16,8 @@
 {% if reprocessing %}<p class="card small">⏳ Inserate werden gerade neu bewertet – Seite gleich neu laden.</p>{% endif %}
 {% for r in runs %}{% if r.error %}<p class="card fw-nein">⚠️ Letzter Lauf {{ r.source }}: {{ r.error }}</p>{% endif %}{% endfor %}
 
+<details class="filter-box" open>
+  <summary>Filter{% set nf = [f.search, f.fernwaerme, f.rooms_min, f.rooms_max, f.price_max, f.source, f.status, f.q]|select|list|length + (1 if f.liked else 0) %}{% if nf %} <span class="badge">{{ nf }} aktiv</span>{% endif %}</summary>
 <form class="filters" method="get">
   <label>Suche<select name="search"><option value="">alle Suchen</option>
     {% for x in searches %}<option value="{{ x.id }}" {% if f.search == x.id|string %}selected{% endif %}>{{ x.name }}{{ " (pausiert)" if not x.active }}</option>{% endfor %}</select></label>
@@ -43,6 +45,7 @@
          <span><input type="checkbox" name="dupes" value="1" {% if f.dupes %}checked{% endif %}> Dubletten</span></label>
   <button>Filtern</button>
 </form>
+</details>
 <div class="export">
   <span class="muted">{{ rows|length }} Inserate</span>
   <a href="/karte{{ '?' ~ query if query }}">🗺️ auf Karte zeigen</a>
@@ -53,7 +56,7 @@
 <div class="list">
 {% for l in rows %}{% set d = l.data %}
   <div class="card item" id="l{{ l.id }}">
-    {% if l.image_url %}<img src="{{ l.image_url }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.removeAttribute('src')">{% else %}<img alt="">{% endif %}
+    {% if l.image_url %}<img src="{{ l.image_url }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;img-ph&quot; aria-hidden=&quot;true&quot;></div>'">{% else %}<div class="img-ph" aria-hidden="true"></div>{% endif %}
     <div class="item-main">
       <h3><a class="lid" href="/listing/{{ l.id }}">#{{ l.id }}</a> <a href="/listing/{{ l.id }}">{{ l.title or "(ohne Titel)" }}</a></h3>
       <div class="facts">

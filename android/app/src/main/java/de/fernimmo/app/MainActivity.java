@@ -7,6 +7,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
@@ -59,8 +60,12 @@ public class MainActivity extends Activity {
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
         progress.setVisibility(View.GONE);
+        progress.setProgressTintList(ColorStateList.valueOf(0xFFF5A524));   // Bernstein
+        progress.setBackgroundColor(0xFF0B2545);
         root.addView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 8));
         web = new WebView(this);
+        web.setBackgroundColor(0xFF0B2545);   // Nachtblau, bis die Seite geladen ist
+        root.setBackgroundColor(0xFF0B2545);
         root.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
 

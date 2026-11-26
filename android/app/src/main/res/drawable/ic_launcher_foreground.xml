@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Haus mit Flamme, innerhalb der sicheren Zone (66 dp) des 108-dp-Symbols -->
+<!-- Weißes Haus mit Bernstein-Flamme (Fernwärme), innerhalb der sicheren Zone des 108-dp-Symbols -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#FFFFFF" android:pathData="M30,55 L54,32 L78,55 Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M36,53 L72,53 L72,80 L36,80 Z" />
-    <path android:fillColor="#C2410C"
-        android:pathData="M54,56 L61,69 A7,7 0 1,1 47,69 Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M29,55 L54,31 L79,55 Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M36,52 L72,52 L72,80 L36,80 Z" />
+    <path android:fillColor="#F5A524" android:pathData="M54,49 L62.5,66.5 A8.5,8.5 0 1,1 45.5,66.5 Z" />
+    <path android:fillColor="#FFDC96" android:pathData="M54,64.5 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0" />
 </vector>

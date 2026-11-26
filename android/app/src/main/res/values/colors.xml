@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_background">#C2410C</color>
+    <color name="navy_900">#061529</color>
+    <color name="navy_800">#0B2545</color>
+    <color name="navy_600">#1B3F73</color>
+    <color name="amber">#F5A524</color>
 </resources>

@@ -6,6 +6,8 @@
 <script src="/static/fernimmo-map.js"></script>
 {% endblock %}
 {% block content %}
+<details class="filter-box" open>
+  <summary>Filter{% set nf = [f.search, f.fernwaerme, f.rooms_min, f.rooms_max, f.price_max, f.source, f.status, f.q]|select|list|length + (1 if f.liked else 0) %}{% if nf %} <span class="badge">{{ nf }} aktiv</span>{% endif %}</summary>
 <form class="filters" method="get">
   <label>Suche<select name="search"><option value="">alle Suchen</option>
     {% for x in searches %}<option value="{{ x.id }}" {% if f.search == x.id|string %}selected{% endif %}>{{ x.name }}{{ " (pausiert)" if not x.active }}</option>{% endfor %}</select></label>
@@ -25,6 +27,7 @@
   <button>Filtern</button>
   <a href="/gebiet" style="align-self:center">Suche bearbeiten →</a>
 </form>
+</details>
 <div class="legend small">
   <span><i class="dot" style="background:#15803d"></i> Volltreffer</span>
   <span><i class="dot" style="background:#d97706"></i> möglich</span>
