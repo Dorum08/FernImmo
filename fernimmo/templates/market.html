@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Markt – FernImmo{% endblock %}
+{% block content %}
+<h2 style="margin-top:0">Markt</h2>
+<p class="muted small">Grundlage sind alle Inserate, die FernImmo in den letzten Monaten gesammelt hat (ohne Dubletten).
+  Je mehr Portale und Suchseiten laufen, desto aussagekräftiger. Für Vergleichsmieten Miet-Suchseiten mit
+  <code>vergleichsmieten: true</code> in der config.yaml eintragen.</p>
+
+<form class="filters" method="get">
+  <label>Art<select name="art">
+    <option value="kauf" {{ "selected" if art == "kauf" }}>Kauf</option>
+    <option value="miete" {{ "selected" if art == "miete" }}>Miete</option></select></label>
+  <label>PLZ oder PLZ-Anfang<input name="plz" value="{{ plz }}" placeholder="z.B. 90443 oder 904" inputmode="numeric"></label>
+  <button>Anzeigen</button>
+</form>
+
+<div class="card viz-root" id="trend-card">
+  <h3 style="margin-top:0">Preis pro m² nach Monat ({{ "Kauf" if art == "kauf" else "Kaltmiete" }}, Median)</h3>
+  <div id="legend" class="legend small"></div>
+  <div id="chart" class="chart" role="img" aria-label="Median-Preis pro Quadratmeter je Monat"></div>
+  <p id="chart-empty" class="muted small" hidden>Noch zu wenige Daten für einen Verlauf – nach einigen Wochen Suche füllt sich das.</p>
+  <details class="small" style="margin-top:6px"><summary>Als Tabelle</summary>
+    <table><tr><th>Monat</th><th>{{ plz or "–" }}</th><th>n</th><th>Alle</th><th>n</th></tr>
+      {% set pm = {} %}{% for r in trend_plz %}{% set _ = pm.update({r.month: r}) %}{% endfor %}
+      {% for r in trend_all %}<tr><td>{{ r.month }}</td><td>{{ pm[r.month].median|num(" €") if r.month in pm else "–" }}</td>
+        <td>{{ pm[r.month].n if r.month in pm else "" }}</td><td>{{ r.median|num(" €") }}</td><td>{{ r.n }}</td></tr>{% endfor %}
+    </table></details>
+</div>
+
+<div class="card" style="margin-top:12px">
+  <h3 style="margin-top:0">Nach PLZ (letzte 12 Monate)</h3>
+  <div class="table-wrap"><table>
+    <tr><th>PLZ</th><th>Kauf €/m²</th><th>n</th><th>Kaltmiete €/m²</th><th>n</th><th title="Jahreskaltmiete / Kaufpreis, nur grob">Bruttorendite</th></tr>
+    {% for r in table %}
+    <tr><td><a href="/markt?plz={{ r.plz }}&art={{ art }}">{{ r.plz }}</a></td>
+      <td>{{ r.kauf|num(" €") if r.kauf else "–" }}</td><td class="muted">{{ r.n_kauf or "" }}</td>
+      <td>{{ ("%.2f €"|format(r.miete)).replace(".", ",") if r.miete else "–" }}</td><td class="muted">{{ r.n_miete or "" }}</td>
+      <td>{{ ("%.1f %%"|format(r.rendite)).replace(".", ",") if r.rendite else "–" }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">Noch keine Daten.</td></tr>{% endfor %}
+  </table></div>
+</div>
+
+<script>
+(() => {
+  const all = {{ trend_all|tojson }}, sel = {{ trend_plz|tojson }}, plz = {{ plz|tojson }};
+  const el = document.getElementById("chart");
+  if (all.length < 2) { el.hidden = true; document.getElementById("chart-empty").hidden = false; return; }
+  const css = getComputedStyle(document.querySelector(".viz-root"));
+  const series = [
+    ...(plz && sel.length ? [{name: "PLZ " + plz, data: sel, color: css.getPropertyValue("--series-1").trim()}] : []),
+    {name: "Alle Inserate", data: all, color: css.getPropertyValue(plz && sel.length ? "--series-2" : "--series-1").trim()},
+  ];
+  const months = all.map(r => r.month);
+  const W = el.clientWidth || 700, H = 280, m = {l: 56, r: 110, t: 12, b: 28};
+  const vals = series.flatMap(s => s.data.map(r => r.median));
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = (hi - lo) * 0.15 || hi * 0.1; lo = Math.max(0, lo - pad); hi = hi + pad;
+  const x = i => m.l + (W - m.l - m.r) * (months.length === 1 ? 0.5 : i / (months.length - 1));
+  const y = v => m.t + (H - m.t - m.b) * (1 - (v - lo) / (hi - lo));
+  const fmt = v => Math.round(v).toLocaleString("de-DE") + " €";
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("width", "100%"); svg.setAttribute("height", H);
+  const add = (tag, attrs, text) => { const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text != null) n.textContent = text; svg.appendChild(n); return n; };
+  // Raster + y-Achse (zurückhaltend)
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4, yy = y(v);
+    add("line", {x1: m.l, x2: W - m.r, y1: yy, y2: yy, class: "grid"});
+    add("text", {x: m.l - 8, y: yy + 4, "text-anchor": "end", class: "axis"}, fmt(v));
+  }
+  const step = Math.max(1, Math.ceil(months.length / 8));
+  months.forEach((mo, i) => { if (i % step === 0 || i === months.length - 1)
+    add("text", {x: x(i), y: H - 8, "text-anchor": "middle", class: "axis"}, mo.slice(5) + "/" + mo.slice(2, 4)); });
+  // Linien, Punkte, Endbeschriftung
+  for (const s of series) {
+    const pts = s.data.map(r => [x(months.indexOf(r.month)), y(r.median)]);
+    add("polyline", {points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: s.color, "stroke-width": 2,
+                     "stroke-linejoin": "round", "stroke-linecap": "round"});
+    for (const p of pts) add("circle", {cx: p[0], cy: p[1], r: 4, fill: s.color, class: "dot"});
+    const last = pts[pts.length - 1], lr = s.data[s.data.length - 1];
+    add("text", {x: last[0] + 10, y: last[1] + 4, class: "label"}, `${s.name}: ${fmt(lr.median)}`);
+  }
+  // Fadenkreuz + Tooltip
+  const cross = add("line", {y1: m.t, y2: H - m.b, class: "cross", visibility: "hidden"});
+  el.appendChild(svg);
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; el.appendChild(tip);
+  svg.addEventListener("pointermove", e => {
+    const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) * W / r.width;
+    const i = Math.max(0, Math.min(months.length - 1, Math.round((px - m.l) / ((W - m.l - m.r) / Math.max(1, months.length - 1)))));
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    const rows = series.map(s => { const d = s.data.find(q => q.month === months[i]);
+      return d ? `<div><i class="sw" style="background:${s.color}"></i>${s.name}: <b>${fmt(d.median)}</b> <span class="muted">(n=${d.n})</span></div>` : ""; }).join("");
+    tip.innerHTML = `<div class="muted">${months[i]}</div>${rows}`; tip.hidden = false;
+    tip.style.left = Math.min(r.width - 220, (x(i) * r.width / W) + 12) + "px";
+  });
+  svg.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+  document.getElementById("legend").innerHTML = series.length > 1
+    ? series.map(s => `<span><i class="sw" style="background:${s.color}"></i> ${s.name}</span>`).join("") : "";
+})();
+</script>
+{% endblock %}

@@ -3,6 +3,7 @@
   python -m fernimmo serve        Weboberfläche + regelmäßige Suche (Normalbetrieb)
   python -m fernimmo run          einen Suchlauf ausführen und beenden (z.B. per cron)
   python -m fernimmo reprocess    gespeicherte Inserate neu auswerten
+  python -m fernimmo backup       Datenbank sofort sichern (sonst automatisch täglich)
   python -m fernimmo test-notify  Testnachricht an alle aktiven Kanäle
   python -m fernimmo check URL    eine Detailseite abrufen und die Auswertung anzeigen
 """
@@ -28,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     p_run = sub.add_parser("run")
     p_run.add_argument("--source")
     sub.add_parser("reprocess")
+    sub.add_parser("backup")
     sub.add_parser("test-notify")
     p_check = sub.add_parser("check")
     p_check.add_argument("url")
@@ -40,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     cfg = Config.load(args.config)
-    notifier = Notifier(cfg.notify)
+    notifier = Notifier(cfg.notify, public_url=cfg.public_url)
 
     if args.cmd == "test-notify":
         notifier.send("FernImmo Test", "Testnachricht von FernImmo – die Benachrichtigung funktioniert.")
@@ -55,6 +57,12 @@ def main(argv: list[str] | None = None) -> int:
         res = run_once(cfg, db, notifier, only=args.source)
         print(json.dumps(res, indent=2, ensure_ascii=False))
         return 1 if any(r["error"] for r in res.values()) else 0
+    if args.cmd == "backup":
+        from pathlib import Path
+        target = Path(cfg.backup_dir) / f"fernimmo-manuell-{__import__('datetime').datetime.now():%Y-%m-%d_%H%M}.db"
+        db.backup(target)
+        print(f"Gesichert nach {target}")
+        return 0
     if args.cmd == "reprocess":
         from .pipeline import reprocess
         print(f"{reprocess(cfg, db)} Inserate neu ausgewertet")
@@ -66,6 +74,10 @@ def main(argv: list[str] | None = None) -> int:
         from .web import create_app
         scheduler = Scheduler(cfg, db, notifier)
         scheduler.start()
+        tg = cfg.notify.get("telegram") or {}
+        if tg.get("enabled") and tg.get("buttons", True):
+            from .telegram_bot import TelegramBot
+            TelegramBot(tg, db, list(cfg.web_users), cfg.public_url).start()
         uvicorn.run(create_app(cfg, db, scheduler), host=cfg.web_host, port=cfg.web_port, log_level="warning")
         return 0
     return 2
@@ -97,9 +109,12 @@ def _check(cfg: Config, url: str, source: str | None) -> int:
         return 1
     finally:
         fetcher.close()
-    listing, reasons = evaluate(raw, cfg)
+    from .searches import ensure_searches, fw_filter, load_searches
+    db = DB(cfg.db_path)
+    ensure_searches(cfg, db)
+    listing, reasons = evaluate(raw, cfg, None, load_searches(db), fw_filter(db))
     print(f"Titel:      {raw.title}\nAdresse:    {raw.address}\nArt:        {raw.listing_type}")
-    print(f"Treffer:    {listing.match_level} {listing.matched_profiles} {reasons}")
+    print(f"Treffer:    {listing.match_level} – Suchen: {', '.join(listing.matched_profiles) or 'keine'} {reasons}")
     print("Strukturiert:", json.dumps(raw.structured, indent=2, ensure_ascii=False))
     print("Merkmale:", json.dumps(listing.data, indent=2, ensure_ascii=False))
     return 0

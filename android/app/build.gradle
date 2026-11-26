@@ -1,0 +1,47 @@
+plugins {
+    id "com.android.application"
+}
+
+// Signatur: Für Updates muss jede APK mit demselben Schlüssel signiert sein. Der Schlüssel liegt
+// im (privaten) Repo; über die Umgebungsvariablen lässt er sich durch einen eigenen ersetzen.
+def ksFile = System.getenv("FERNIMMO_KEYSTORE") ?: "${rootDir}/fernimmo-release.keystore"
+def ksPass = System.getenv("FERNIMMO_KEYSTORE_PASSWORD") ?: "fernimmo-apk"
+
+android {
+    namespace "de.fernimmo.app"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "de.fernimmo.app"
+        minSdk 26
+        targetSdk 35
+        versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")
+        versionName "1.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+    }
+
+    signingConfigs {
+        release {
+            storeFile file(ksFile)
+            storePassword ksPass
+            keyAlias "fernimmo"
+            keyPassword ksPass
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

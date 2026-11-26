@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Ab Android 10 folgt die App (und damit die Weboberfläche) dem hellen/dunklen Systemdesign -->
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">#C2410C</item>
+    </style>
+</resources>

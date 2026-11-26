@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -92,6 +93,17 @@ CREATE TABLE IF NOT EXISTS areas (
     created TEXT,
     created_by TEXT
 );
+CREATE TABLE IF NOT EXISTS searches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    position INTEGER DEFAULT 0,
+    active INTEGER DEFAULT 1,
+    notify INTEGER DEFAULT 1,
+    criteria TEXT NOT NULL,      -- JSON: Kriterien (siehe searches.py)
+    plz TEXT DEFAULT '[]',       -- JSON: PLZ bzw. PLZ-Anfänge
+    created TEXT,
+    created_by TEXT
+);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -105,9 +117,11 @@ CREATE TABLE IF NOT EXISTS geocache (
 """
 
 # Spalten, die nachträglich dazugekommen sind (Migration bestehender Datenbanken)
-MIGRATIONS = {"areas": {"center_lat": "REAL", "center_lon": "REAL", "radius_km": "REAL"}, "listings": {
+MIGRATIONS = {"areas": {"center_lat": "REAL", "center_lon": "REAL", "radius_km": "REAL", "search_id": "INTEGER"},
+              "listings": {
     "last_fetched": "TEXT", "lat": "REAL", "lon": "REAL", "geo_precision": "TEXT",
     "loose_fp": "TEXT", "relisted_of": "INTEGER",
+    "matched_searches": "TEXT DEFAULT ''",   # ",1,3," – IDs der passenden Suchen
 }}
 
 # Merkmale, deren Änderung im Verlauf protokolliert wird: Schlüssel -> (Bezeichnung, Einheit)
@@ -268,6 +282,7 @@ class DB:
     def upsert(self, l: Listing, structured: dict[str, str], reasons: list[str],
                track_changes: bool = True) -> tuple[int, bool, list[dict]]:
         """Speichert ein Inserat. Liefert (id, neu?, Änderungen gegenüber dem letzten Stand)."""
+        self._mstats = None   # Marktstatistik neu berechnen
         price = l.price
         fp = fingerprint(l.data, price)
         ts = now()
@@ -279,6 +294,7 @@ class DB:
             area=l.data.get("area"), year=l.data.get("year"), fernwaerme=l.data.get("fernwaerme"),
             plz=l.data.get("plz"), fingerprint=fp, match_level=l.match_level,
             matched_profiles=json.dumps(l.matched_profiles, ensure_ascii=False),
+            matched_searches="".join(f",{i}" for i in l.matched_ids) + ("," if l.matched_ids else ""),
             match_reasons=json.dumps(reasons, ensure_ascii=False), image_url=l.image_url, ts=ts,
             lat=l.data.get("lat"), lon=l.data.get("lon"), geo_precision=l.data.get("geo_precision"),
             loose_fp=loose_fingerprint(l.data),
@@ -293,7 +309,8 @@ class DB:
                     """UPDATE listings SET url=:url, title=:title, address=:address, listing_type=:listing_type,
                     raw_text=:raw_text, structured=:structured, data=:data, price=:price, rooms=:rooms, area=:area,
                     year=:year, fernwaerme=:fernwaerme, plz=:plz, fingerprint=:fingerprint, match_level=:match_level,
-                    matched_profiles=:matched_profiles, match_reasons=:match_reasons, image_url=:image_url,
+                    matched_profiles=:matched_profiles, matched_searches=:matched_searches,
+                    match_reasons=:match_reasons, image_url=:image_url,
                     lat=:lat, lon=:lon, geo_precision=:geo_precision, loose_fp=:loose_fp,
                     last_seen=:ts, last_fetched=:ts, active=1 WHERE id=:id""",
                     {**vals, "id": lid},
@@ -323,11 +340,13 @@ class DB:
         cur = self._exec(
             """INSERT INTO listings(source, source_id, url, title, address, listing_type, raw_text, structured,
             data, price, rooms, area, year, fernwaerme, plz, fingerprint, duplicate_of, match_level,
-            matched_profiles, match_reasons, image_url, lat, lon, geo_precision, loose_fp, relisted_of,
+            matched_profiles, matched_searches, match_reasons, image_url, lat, lon, geo_precision, loose_fp,
+            relisted_of,
             first_seen, last_seen, last_fetched)
             VALUES (:source, :source_id, :url, :title, :address, :listing_type, :raw_text, :structured, :data,
             :price, :rooms, :area, :year, :fernwaerme, :plz, :fingerprint, :duplicate_of, :match_level,
-            :matched_profiles, :match_reasons, :image_url, :lat, :lon, :geo_precision, :loose_fp, :relisted_of,
+            :matched_profiles, :matched_searches, :match_reasons, :image_url, :lat, :lon, :geo_precision,
+            :loose_fp, :relisted_of,
             :ts, :ts, :ts)""",
             vals,
         )
@@ -414,7 +433,7 @@ class DB:
                hide_duplicates: bool = True, q: str | None = None, sort: str = "first_seen",
                liked: bool = False, user: str | None = None, limit: int = 300,
                rooms_min: float | None = None, rooms_max: float | None = None,
-               price_max: float | None = None) -> list[dict]:
+               price_max: float | None = None, search_id: int | None = None) -> list[dict]:
         where, params = [], []
         if q and q.strip().lstrip("#").isdigit():
             # Suche nach FernImmo-ID: alle übrigen Filter ignorieren
@@ -440,6 +459,8 @@ class DB:
                 where.append("duplicate_of IS NULL")
             if liked:
                 where.append("id IN (SELECT listing_id FROM likes)")
+            if search_id is not None:
+                where.append("matched_searches LIKE ?"); params.append(f"%,{int(search_id)},%")
             if rooms_min is not None:
                 where.append("rooms >= ?"); params.append(rooms_min)
             if rooms_max is not None:
@@ -511,6 +532,15 @@ class DB:
             r["change_count"] = counts.get(r["id"], 0)
 
     def market_stats(self, days: int = 365) -> dict:
+        """Wie _market_stats, aber höchstens alle 2 Minuten neu berechnet (Übersicht ruft oft ab)."""
+        cached = getattr(self, "_mstats", None)
+        if cached and time.monotonic() - cached[0] < 120 and cached[1] == days:
+            return cached[2]
+        stats = self._market_stats(days)
+        self._mstats = (time.monotonic(), days, stats)
+        return stats
+
+    def _market_stats(self, days: int = 365) -> dict:
         """Median-€/m² je PLZ und gesamt, getrennt nach Kauf/Miete (letzte `days` Tage,
         ohne Dubletten und ohne durch Wiedereinstellung ersetzte Inserate)."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
@@ -527,6 +557,51 @@ class DB:
             by.setdefault((lt, r["plz"] or "?"), []).append(ppsqm)
             by.setdefault((lt, "*"), []).append(ppsqm)
         return {k: (median(v), len(v)) for k, v in by.items()}
+
+    def _market_rows(self, listing_type: str, days: int):
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        for r in self._query(
+                """SELECT plz, price, area, first_seen FROM listings
+                   WHERE listing_type=? AND duplicate_of IS NULL AND price > 0 AND area >= 15 AND first_seen >= ?
+                     AND id NOT IN (SELECT relisted_of FROM listings WHERE relisted_of IS NOT NULL)""",
+                (listing_type, cutoff)):
+            ppsqm = r["price"] / r["area"]
+            if 3 < ppsqm < 25000:
+                yield r["plz"], ppsqm, r["first_seen"][:7]
+
+    def rent_estimate(self, plz: str | None) -> tuple[float, str] | None:
+        """Vergleichsmiete €/m² aus gesammelten Mietinseraten: PLZ (ab 3), sonst gesamt (ab 5)."""
+        stats = self.market_stats()
+        ref = stats.get(("miete", plz or "?"))
+        if ref and ref[1] >= 3:
+            return round(ref[0], 2), f"Median aus {ref[1]} Mietinseraten in {plz}"
+        ref = stats.get(("miete", "*"))
+        if ref and ref[1] >= 5:
+            return round(ref[0], 2), f"Median aus {ref[1]} Mietinseraten (alle PLZ)"
+        return None
+
+    def market_table(self, days: int = 365) -> list[dict]:
+        """Je PLZ: Median-€/m² Kauf und Miete, Anzahl, grobe Bruttorendite."""
+        acc: dict[str, dict] = {}
+        for lt in ("kauf", "miete"):
+            for plz, v, _ in self._market_rows(lt, days):
+                acc.setdefault(plz or "?", {"kauf": [], "miete": []})[lt].append(v)
+        out = []
+        for plz, d in acc.items():
+            k, m = median(d["kauf"]), median(d["miete"])
+            out.append({"plz": plz, "kauf": round(k) if k else None, "n_kauf": len(d["kauf"]),
+                        "miete": round(m, 2) if m else None, "n_miete": len(d["miete"]),
+                        "rendite": round(m * 12 / k * 100, 2) if k and m else None})
+        return sorted(out, key=lambda r: (-r["n_kauf"] - r["n_miete"], r["plz"]))
+
+    def price_trend(self, listing_type: str = "kauf", plz: str | None = None, days: int = 730) -> list[dict]:
+        """Median-€/m² je Monat (nach Erstfund), optional nur eine PLZ bzw. ein PLZ-Anfang."""
+        by: dict[str, list[float]] = {}
+        for p, v, month in self._market_rows(listing_type, days):
+            if plz and not (p or "").startswith(plz):
+                continue
+            by.setdefault(month, []).append(v)
+        return [{"month": m, "median": round(median(v)), "n": len(v)} for m, v in sorted(by.items())]
 
     def all_for_reprocess(self) -> list[dict]:
         return [_row(r) for r in self._query("SELECT * FROM listings")]
@@ -552,24 +627,74 @@ class DB:
         self._exec("INSERT OR REPLACE INTO geocache(query, lat, lon, ts) VALUES (?,?,?,?)",
                    (query, point[0] if point else None, point[1] if point else None, now()))
 
-    def areas(self, kind: str | None = None) -> list[dict]:
-        sql, params = "SELECT * FROM areas", ()
+    def areas(self, kind: str | None = None, search_id: int | None = None) -> list[dict]:
+        where, params = [], []
         if kind:
-            sql, params = sql + " WHERE kind=?", (kind,)
+            where.append("kind=?"); params.append(kind)
+        if search_id is not None:
+            where.append("search_id=?"); params.append(search_id)
+        sql = "SELECT * FROM areas" + (" WHERE " + " AND ".join(where) if where else "")
         out = []
-        for r in self._query(sql + " ORDER BY id", params):
+        for r in self._query(sql + " ORDER BY id", tuple(params)):
             d = dict(r)
             d["geometry"] = json.loads(d["geometry"])
             out.append(d)
         return out
 
     def add_area(self, kind: str, name: str, geometry: dict, user: str,
-                 center: tuple[float, float] | None = None, radius_km: float | None = None) -> int:
+                 center: tuple[float, float] | None = None, radius_km: float | None = None,
+                 search_id: int | None = None) -> int:
         return self._exec(
-            """INSERT INTO areas(kind, name, geometry, created, created_by, center_lat, center_lon, radius_km)
-               VALUES (?,?,?,?,?,?,?,?)""",
+            """INSERT INTO areas(kind, name, geometry, created, created_by, center_lat, center_lon, radius_km,
+               search_id) VALUES (?,?,?,?,?,?,?,?,?)""",
             (kind, name[:100], json.dumps(geometry), now(), user,
-             center[0] if center else None, center[1] if center else None, radius_km)).lastrowid
+             center[0] if center else None, center[1] if center else None, radius_km,
+             search_id if kind == "search" else None)).lastrowid
+
+    def get_area(self, aid: int) -> dict | None:
+        r = self._query("SELECT * FROM areas WHERE id=?", (aid,))
+        return dict(r[0]) if r else None
+
+    def assign_orphan_areas(self, search_id: int) -> None:
+        self._exec("UPDATE areas SET search_id=? WHERE kind='search' AND search_id IS NULL", (search_id,))
+
+    # ------------------------------------------------------------------ suchen
+    def searches(self) -> list[dict]:
+        out = []
+        for r in self._query("SELECT * FROM searches ORDER BY position, id"):
+            d = dict(r)
+            d["criteria"] = json.loads(d["criteria"])
+            d["plz"] = json.loads(d["plz"] or "[]")
+            out.append(d)
+        return out
+
+    def get_search(self, sid: int) -> dict | None:
+        return next((s for s in self.searches() if s["id"] == sid), None)
+
+    def add_search(self, name: str, criteria: dict, plz: list[str], user: str) -> int:
+        pos = (self._query("SELECT COALESCE(MAX(position), 0) + 1 p FROM searches")[0]["p"])
+        return self._exec(
+            "INSERT INTO searches(name, position, criteria, plz, created, created_by) VALUES (?,?,?,?,?,?)",
+            (name[:80], pos, json.dumps(criteria), json.dumps(plz), now(), user)).lastrowid
+
+    def update_search(self, sid: int, **fields: Any) -> None:
+        cols = {k: (json.dumps(v) if k in ("criteria", "plz") else v) for k, v in fields.items()
+                if k in ("name", "active", "notify", "criteria", "plz", "position")}
+        if cols:
+            self._exec(f"UPDATE searches SET {', '.join(f'{k}=?' for k in cols)} WHERE id=?",
+                       (*cols.values(), sid))
+
+    def delete_search(self, sid: int) -> bool:
+        with self.lock:
+            n = self.conn.execute("DELETE FROM searches WHERE id=?", (sid,)).rowcount
+            self.conn.execute("DELETE FROM areas WHERE search_id=?", (sid,))
+            self.conn.commit()
+        return n > 0
+
+    def copy_search_areas(self, from_id: int, to_id: int) -> None:
+        self._exec("""INSERT INTO areas(kind, name, geometry, created, created_by, center_lat, center_lon,
+                      radius_km, search_id) SELECT kind, name, geometry, ?, created_by, center_lat, center_lon,
+                      radius_km, ? FROM areas WHERE search_id=?""", (now(), to_id, from_id))
 
     def rename_area(self, aid: int, name: str) -> None:
         self._exec("UPDATE areas SET name=? WHERE id=?", (name[:100], aid))
@@ -615,6 +740,20 @@ class DB:
             "INSERT INTO runs(started, finished, source, found, new, matches, error) VALUES (?,?,?,?,?,?,?)",
             (started, now(), source, found, new, matches, error),
         )
+
+    def last_runs(self, source: str, n: int) -> list[dict]:
+        return [dict(r) for r in self._query("SELECT * FROM runs WHERE source=? ORDER BY id DESC LIMIT ?",
+                                             (source, n))]
+
+    def backup(self, target: str | Path) -> None:
+        """Konsistente Kopie der laufenden Datenbank (SQLite-Backup, auch während Schreibzugriffen)."""
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        dst = sqlite3.connect(str(target))
+        try:
+            with self.lock:
+                self.conn.backup(dst)
+        finally:
+            dst.close()
 
     def recent_runs(self, limit: int = 30) -> list[dict]:
         return [dict(r) for r in self._query("SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,))]

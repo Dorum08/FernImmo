@@ -14,7 +14,7 @@
     <span class="badge b-{{ l.match_level }}">{{ l.match_level }}</span>
     <span class="badge fw-{{ l.fernwaerme }}">Fernwärme: {{ (l.fernwaerme or "?").replace("_"," ") }}</span>
     {% if not l.active %}<span class="badge fw-nein">offline</span>{% endif %}
-    {% for p in l.matched_profiles %}<span class="badge">{{ p }}</span> {% endfor %}
+    {% for p in l.matched_profiles %}<span class="badge search-badge">🔎 {{ p }}</span> {% endfor %}
     <a href="{{ l.url }}" target="_blank" rel="noopener">Zum Inserat auf {{ l.source }} ↗</a>
   </p>
   {% if l.match_reasons %}<p class="muted">Bewertung: {{ l.match_reasons|join("; ") }}</p>{% endif %}
@@ -78,7 +78,7 @@
     <label>Eigenkapital €<input type="number" step="1000" name="eigenkapital" value="{{ calc_defaults.eigenkapital }}"></label>
     <label>Sollzins % p.a.<input type="number" step="0.05" name="zins_pct" value="{{ calc_defaults.zins_pct }}"></label>
     <label>Anfängl. Tilgung %<input type="number" step="0.1" name="tilgung_pct" value="{{ calc_defaults.tilgung_pct }}"></label>
-    <label>Vergleichsmiete €/m²<input type="number" step="0.1" name="miete_pro_qm" value="{{ calc_defaults.miete_pro_qm }}"></label>
+    <label>Vergleichsmiete €/m² <span class="small" title="{{ c0.miete_quelle }}">({{ "Mietinserate" if c0.miete_quelle != "Vorgabe" else "Vorgabe" }})</span><input type="number" step="0.1" name="miete_pro_qm" value="{{ c0.miete_pro_qm }}" {{ "data-fixed" if c0.miete_quelle != "Vorgabe" }} title="{{ c0.miete_quelle }}"></label>
     <label>Hausgeld nicht umlagefähig %<input type="number" step="1" name="hausgeld_nicht_umlagefaehig_pct" value="{{ calc_defaults.hausgeld_nicht_umlagefaehig_pct }}"></label>
   </form>
   <div class="calc-out" id="calc-out"></div>

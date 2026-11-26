@@ -67,6 +67,12 @@ class Config:
         self.notify_levels: list[str] = n.get("levels", ["voll", "teilweise"])
         self.notify_price_drops: bool = _bool(n.get("price_drops", True))
         self.notify_first_run: bool = _bool(n.get("first_run", False))
+        # Warnung, wenn ein Portal so viele Läufe in Folge nichts liefert (0 = aus)
+        self.alert_failed_runs: int = int(n.get("alert_failed_runs", 3))
+        b = raw.get("backup") or {}
+        self.backup_enabled: bool = _bool(b.get("enabled", True))
+        self.backup_dir: str = b.get("dir") or str(Path(self.db_path).parent / "backups")
+        self.backup_keep: int = int(b.get("keep", 14))
         w = raw.get("web", {})
         self.web_host: str = w.get("host", "0.0.0.0")
         self.web_port: int = int(w.get("port", 8080))
@@ -75,6 +81,9 @@ class Config:
         if w.get("password"):
             users.setdefault(w.get("username", "admin"), w["password"])
         self.web_users: dict[str, str] = {u: str(p) for u, p in users.items() if p}
+        # Adresse der Weboberfläche, wie du sie vom Handy aus erreichst (z. B. über WireGuard);
+        # für den „Details“-Knopf in Telegram und als Vorgabe in der Android-App
+        self.public_url: str | None = (w.get("public_url") or "").rstrip("/") or None
         self.timezone: str = raw.get("timezone", "Europe/Berlin")
         g = raw.get("geocoding") or {}
         if "enabled" in g:

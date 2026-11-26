@@ -8,14 +8,17 @@
   <div class="card"><span class="muted">Mit Fernwärme</span><b>{{ stats.fw or 0 }}</b></div>
   <div class="card"><span class="muted">Gelikt</span><b class="liked-count">{{ stats.liked or 0 }}</b></div>
 </div>
-{% if not area.plz and not area.polygons %}
-<p class="card small">📍 Noch kein Suchgebiet festgelegt – es gilt die PLZ-Einstellung aus der config.yaml.
-  <a href="/gebiet">Suchgebiet und Kriterien festlegen →</a></p>
+{% set unbounded = searches|selectattr("active")|rejectattr("has_area")|map(attribute="name")|list %}
+{% if unbounded %}
+<p class="card small">📍 Ohne Gebiet und damit bundesweit: {{ unbounded|join(", ") }}.
+  <a href="/suche">Gebiet festlegen →</a></p>
 {% endif %}
 {% if reprocessing %}<p class="card small">⏳ Inserate werden gerade neu bewertet – Seite gleich neu laden.</p>{% endif %}
 {% for r in runs %}{% if r.error %}<p class="card fw-nein">⚠️ Letzter Lauf {{ r.source }}: {{ r.error }}</p>{% endif %}{% endfor %}
 
 <form class="filters" method="get">
+  <label>Suche<select name="search"><option value="">alle Suchen</option>
+    {% for x in searches %}<option value="{{ x.id }}" {% if f.search == x.id|string %}selected{% endif %}>{{ x.name }}{{ " (pausiert)" if not x.active }}</option>{% endfor %}</select></label>
   <label>Treffer<select name="match">
     {% for v,t in [("treffer","Voll + möglich"),("voll","Nur Volltreffer"),("teilweise","Nur mögliche"),("","Alle Inserate")] %}
     <option value="{{v}}" {% if f.match==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
@@ -91,6 +94,7 @@
     <div class="item-side">
       <span class="badge b-{{ l.match_level }}">{{ {"voll":"Volltreffer","teilweise":"möglich","none":"kein Treffer"}[l.match_level] }}</span>
       <span class="badge fw-{{ l.fernwaerme }}">FW: {{ (l.fernwaerme or "?").replace("_"," ") }}</span>
+      {% if searches|length > 1 %}{% for p in l.matched_profiles %}<span class="badge search-badge">🔎 {{ p }}</span>{% endfor %}{% endif %}
       {% if d.fw_zone and l.fernwaerme != "ja" %}<span class="badge fw-ja" title="liegt in einem eingezeichneten Fernwärme-Gebiet">FW-Gebiet</span>{% endif %}
       {% if l.status != "neu" %}<span class="badge">{{ l.status }}</span>{% endif %}
       {% if not l.active %}<span class="badge fw-nein">offline</span>{% endif %}

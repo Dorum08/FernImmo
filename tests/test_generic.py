@@ -124,15 +124,19 @@ def test_criteria_from_web_apply_to_matching(tmp_path, monkeypatch):
     three = next(r for r in db.search(match=None) if r["rooms"] == 3)
     assert three["match_level"] == "none"
     # Zimmer 2,5 bis 3,5 -> die 3-Zimmer-Wohnung passt, die 2-Zimmer-Wohnungen nicht mehr
-    r = c.put("/api/criteria", json={"rooms_min": 2.5, "rooms_max": 3.5, "price_max": None, "area_min": ""})
-    assert r.json() == {"rooms_min": 2.5, "rooms_max": 3.5, "price_max": None, "area_min": None}
+    sid = db.searches()[0]["id"]
+    r = c.patch(f"/api/searches/{sid}", json={"criteria": {"rooms_min": 2.5, "rooms_max": 3.5, "price_max": None,
+                                                            "area_min": ""}})
+    crit = r.json()["criteria"]
+    assert (crit["rooms_min"], crit["rooms_max"], crit["price_max"], crit["area_min"]) == (2.5, 3.5, None, None)
     assert db.get(three["id"])["match_level"] == "voll"
     assert all(r["match_level"] == "none" for r in db.search(match=None) if r["rooms"] == 2)
-    assert c.put("/api/criteria", json={"rooms_min": 3, "rooms_max": 2}).status_code == 400
-    page = c.get("/gebiet").text
-    assert "Suchkriterien" in page and 'value="2.5" selected' in page
+    r = c.patch(f"/api/searches/{sid}", json={"criteria": {"rooms_min": 3, "rooms_max": 2}})
+    assert r.status_code == 400 and "größer" in r.json()["detail"]
+    page = c.get(f"/suche?id={sid}").text
+    assert "Kriterien" in page and 'value="2.5" selected' in page
     # Übersichtsfilter mit halben Zimmern
     assert [r["rooms"] for r in db.search(match=None, rooms_min=2.5)] == [3]
     assert c.get("/?match=&rooms_min=1.5&rooms_max=2").status_code == 200
     # PLZ-Anfänge: "904" deckt "90443" ab, Doppelungen fallen weg
-    assert c.put("/api/search-plz", json={"plz": ["904", "90443", "1"]}).json()["plz"] == ["1", "904"]
+    assert c.patch(f"/api/searches/{sid}", json={"plz": ["904", "90443", "1"]}).json()["plz"] == ["1", "904"]

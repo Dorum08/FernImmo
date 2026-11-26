@@ -7,6 +7,8 @@
 {% endblock %}
 {% block content %}
 <form class="filters" method="get">
+  <label>Suche<select name="search"><option value="">alle Suchen</option>
+    {% for x in searches %}<option value="{{ x.id }}" {% if f.search == x.id|string %}selected{% endif %}>{{ x.name }}{{ " (pausiert)" if not x.active }}</option>{% endfor %}</select></label>
   <label>Treffer<select name="match">
     {% for v,t in [("treffer","Voll + möglich"),("voll","Nur Volltreffer"),("teilweise","Nur mögliche"),("","Alle Inserate")] %}
     <option value="{{v}}" {% if f.match==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
@@ -38,7 +40,7 @@
 (async () => {
   const map = FI.map("map", {{ center|tojson }}, {{ zoom }});
   const [data, areaState] = await Promise.all([
-    FI.json("/api/map?" + {{ query|tojson }}), FI.json("/api/areas")]);
+    FI.json("/api/map?" + {{ query|tojson }}), FI.json("/api/areas" + ({{ f.search|tojson }} ? "?search=" + {{ f.search|tojson }} : ""))]);
 
   // Suchgebiet: ausgewählte PLZ + gezeichnete Flächen
   L.geoJSON({type: "FeatureCollection", features: await FI.selectedFeatures(areaState.plz)},

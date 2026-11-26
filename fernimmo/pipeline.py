@@ -1,7 +1,6 @@
 """Ein Suchlauf: Quellen abfragen, neue Inserate auswerten, speichern, melden."""
 from __future__ import annotations
 
-import copy
 import logging
 import re
 import random
@@ -14,57 +13,28 @@ from .db import DB, now
 from .extract import extract, normalize_rooms
 from .geo import AreaFilter, Geocoder, plz_for_point, plz_state
 from .fetch import BlockedError, NotFoundError, make_fetcher
-from .matcher import best_match
+from .searches import Search, ensure_searches, fw_filter, load_searches, match_all
 from .models import Listing, RawListing
 from .calc import costs
 from .notify import Notifier, format_message
 
 
-def _calc(row: dict, cfg: Config) -> dict | None:
+def _calc(row: dict, cfg: Config, db: DB | None = None) -> dict | None:
     if row.get("listing_type") != "kauf":
         return None
     d = row["data"]
     return costs(row.get("price"), d.get("area"), d.get("hausgeld"), d.get("flags"), cfg.calculator,
-                 state=plz_state(row.get("plz")))
+                 state=plz_state(row.get("plz")), rent_sqm=db.rent_estimate(row.get("plz")) if db else None)
 from .sources import build_source
 from .sources.base import SearchHit
 
 log = logging.getLogger(__name__)
 
 
-def load_area(db: DB) -> AreaFilter:
-    """Suchgebiet und Fernwärme-Gebiete aus der Weboberfläche."""
-    return AreaFilter(
-        plz=db.get_setting("search_plz", []),
-        polygons=[a["geometry"] for a in db.areas("search") if a.get("radius_km") is None],
-        circles=[(a["center_lat"], a["center_lon"], a["radius_km"]) for a in db.areas("search")
-                 if a.get("radius_km") is not None],
-        fw_zones=[a["geometry"] for a in db.areas("fw")],
-    )
-
-
-CRITERIA_KEYS = ("rooms_min", "rooms_max", "price_max", "area_min")
-
-
-def effective_profiles(cfg: Config, db: DB) -> list:
-    """Profile aus config.yaml, überschrieben mit den Suchkriterien aus der Weboberfläche."""
-    crit = db.get_setting("criteria")
-    if not crit:
-        return cfg.profiles
-    out = []
-    for p in cfg.profiles:
-        q = copy.copy(p)
-        for k in CRITERIA_KEYS:
-            if k in crit:
-                setattr(q, k, crit[k])
-        out.append(q)
-    return out
-
-
-def prefiltered(hit: SearchHit, cfg: Config, area: AreaFilter, profiles: list) -> bool:
-    """True, wenn schon der Kurztext aus der Ergebnisliste klar gegen alle Profile spricht
+def prefiltered(hit: SearchHit, searches: list[Search]) -> bool:
+    """True, wenn schon der Kurztext aus der Ergebnisliste klar gegen alle Suchen spricht
     (z. B. falsche PLZ bei bundesweiter Suche, 4 Zimmer bei Suche nach 1–2). Spart Abrufe."""
-    if not hit.snippet or not profiles:
+    if not hit.snippet or not searches:
         return False
     data = extract(hit.snippet)
     # Nur eindeutige Angaben verwenden: nennt die Kachel mehrere Zimmerzahlen, Flächen oder
@@ -76,12 +46,11 @@ def prefiltered(hit: SearchHit, cfg: Config, area: AreaFilter, profiles: list) -
         data["area"] = None
     if len(set(re.findall(r"(\d{1,3}(?:\.\d{3})+|\d{5,7})(?:,\d+)?\s*(?:€|eur)", snip, re.I))) > 1:
         data["purchase_price"] = data["price_generic"] = data["rent_cold"] = None
-    level, _, _ = best_match(profiles, hit.listing_type, data, hit.snippet, area)
-    return level == "none"
+    return match_all(searches, hit.listing_type, data, hit.snippet).level == "none"
 
 
 def evaluate(raw: RawListing, cfg: Config, geocoder: Geocoder | None = None,
-             area: AreaFilter | None = None, profiles: list | None = None) -> tuple[Listing, list[str]]:
+             searches: list[Search] | None = None, fw: AreaFilter | None = None) -> tuple[Listing, list[str]]:
     data = extract(raw.text, raw.title, raw.structured)
     # Generischer "Preis" (z.B. Kleinanzeigen) = Kaltmiete bzw. Kaufpreis
     if data.get("price_generic"):
@@ -100,14 +69,18 @@ def evaluate(raw: RawListing, cfg: Config, geocoder: Geocoder | None = None,
     data.update(lat=lat, lon=lon, geo_precision=prec)
     if not data.get("plz") and lat is not None and prec in ("portal", "adresse"):
         data["plz"] = plz_for_point(lat, lon)
-    data["fw_zone"] = bool(area and area.in_fw_zone(data))
+    data["fw_zone"] = bool(fw and fw.in_fw_zone(data))
     full_text = f"{raw.title}\n{raw.text}"
-    level, names, reasons = best_match(profiles if profiles is not None else cfg.profiles,
-                                       raw.listing_type, data, full_text, area)
+    if searches is None:   # ohne Datenbank (z. B. Einzeltest): Profile aus der config.yaml
+        searches = [Search(id=0, name=p.name, active=True, notify=True, criteria={}, plz=list(p.plz),
+                           profile=p, area=None) for p in cfg.profiles]
+    out = match_all(searches, raw.listing_type, data, full_text)
+    level, names, reasons = out.level, out.names, out.reasons
     listing = Listing(
         id=None, source=raw.source, source_id=raw.source_id, url=raw.url, title=raw.title,
         address=raw.address, listing_type=raw.listing_type, data=data, match_level=level,
-        matched_profiles=names, image_url=raw.image_url, raw_text=raw.text,
+        matched_profiles=names, matched_ids=[i for i in out.ids if i], notify_level=out.notify_level,
+        image_url=raw.image_url, raw_text=raw.text,
     )
     return listing, reasons
 
@@ -117,8 +90,8 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
     stats = {"found": 0, "new": 0, "matches": 0, "error": None}
     fetcher = make_fetcher(scfg.get("fetcher", cfg.fetcher), cfg.delay, cfg.user_agent, cfg.proxy)
     geocoder = Geocoder(db, cfg.geocoding)
-    area = load_area(db)
-    profiles = effective_profiles(cfg, db)
+    searches = load_searches(db)
+    fw = fw_filter(db)
     try:
         src = build_source(name, scfg, fetcher)
         known = db.known_ids(src.name)
@@ -127,7 +100,8 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
         stats["found"] = len(hits)
         db.touch(src.name, [h.source_id for h in hits if h.source_id in known])
         new_hits = [h for h in hits if h.source_id not in known]
-        todo = [h for h in new_hits if not prefiltered(h, cfg, area, profiles)]
+        # Quellen nur für Vergleichsmieten werden nie vorab aussortiert (sie treffen keine Kaufsuche)
+        todo = [h for h in new_hits if scfg.get("vergleichsmieten") or not prefiltered(h, searches)]
         stats["prefiltered"] = len(new_hits) - len(todo)
         todo = todo[: src.max_details]
         # Bekannte Treffer und gelikte Inserate regelmäßig neu laden, damit
@@ -149,7 +123,7 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
             except Exception as e:  # noqa: BLE001
                 log.warning("[%s] Detailseite %s fehlgeschlagen: %s", name, hit.url, e)
                 continue
-            listing, reasons = evaluate(raw, cfg, geocoder, area, profiles)
+            listing, reasons = evaluate(raw, cfg, geocoder, searches, fw)
             lid, is_new, changes = db.upsert(listing, raw.structured, reasons)
             row = db.get(lid)
             price_drop = next((c for c in changes if c["field"] in ("purchase_price", "rent_cold")
@@ -161,18 +135,18 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
             # Preissenkung: bei gemeldeten Treffern und bei gelikten Wohnungen (auch ohne Treffer)
             if price_drop and cfg.notify_price_drops and (row.get("notified_at") or row["likes"]):
                 subject, body = format_message(row, kind="preis", old_price=price_drop["old_price"],
-                                               calc=_calc(row, cfg))
-                notifier.send(subject, body, row["url"])
+                                               calc=_calc(row, cfg, db))
+                notifier.send(subject, body, row["url"], listing_id=lid)
             if listing.match_level == "none":
                 continue
             if is_new:
                 stats["matches"] += 1
-            if is_new and row["duplicate_of"] is None and listing.match_level in cfg.notify_levels:
+            if is_new and row["duplicate_of"] is None and listing.notify_level in cfg.notify_levels:
                 if first_run and not cfg.notify_first_run:
                     first_run_matches.append(row)
                     continue
-                subject, body = format_message(row, calc=_calc(row, cfg))
-                notifier.send(subject, body, row["url"])
+                subject, body = format_message(row, calc=_calc(row, cfg, db))
+                notifier.send(subject, body, row["url"], listing_id=lid)
                 db.mark_notified(lid)
         if first_run_matches:
             notifier.send(
@@ -196,20 +170,65 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
 
 
 def run_once(cfg: Config, db: DB, notifier: Notifier, only: str | None = None) -> dict[str, dict]:
+    ensure_searches(cfg, db)
     results = {}
     for name, scfg in cfg.sources.items():
         if only and name != only:
             continue
         results[name] = run_source(name, scfg, cfg, db, notifier)
+        check_source_health(name, cfg, db, notifier)
     return results
+
+
+def check_source_health(name: str, cfg: Config, db: DB, notifier: Notifier) -> None:
+    """Meldet, wenn ein Portal mehrere Läufe in Folge nichts liefert (gesperrt, Layout geändert,
+    Such-URL kaputt) – und einmalig, wenn es wieder geht. Sonst merkt man den Ausfall nicht."""
+    n = cfg.alert_failed_runs
+    if n <= 0:
+        return
+    runs = db.last_runs(name, n)
+    if not runs:
+        return
+    state = db.get_setting("source_alerts", {})
+    bad = lambda r: bool(r["error"]) or not r["found"]
+    if len(runs) == n and all(bad(r) for r in runs):
+        if state.get(name) != "down":
+            reason = runs[0]["error"] or "keine Inserate auf der Suchseite gefunden"
+            notifier.send(f"⚠️ FernImmo: {name} liefert nichts",
+                          f"⚠️ {name}: seit {n} Suchläufen keine Ergebnisse.\nLetzter Stand: {reason}\n\n"
+                          "Mögliche Ursachen: Portal blockiert den Abruf, Seitenaufbau geändert oder Such-URL "
+                          "veraltet. Prüfen mit: python -m fernimmo check <Inserat-URL>")
+            state[name] = "down"
+            db.set_setting("source_alerts", state)
+    elif not bad(runs[0]) and state.get(name) == "down":
+        notifier.send(f"✅ FernImmo: {name} wieder ok", f"✅ {name} liefert wieder Ergebnisse ({runs[0]['found']}).")
+        state.pop(name, None)
+        db.set_setting("source_alerts", state)
+
+
+def backup_if_due(cfg: Config, db: DB) -> str | None:
+    """Einmal pro Tag eine Kopie der Datenbank; ältere als `keep` Tage werden gelöscht."""
+    if not cfg.backup_enabled:
+        return None
+    from pathlib import Path
+    day = datetime.now().strftime("%Y-%m-%d")
+    target = Path(cfg.backup_dir) / f"fernimmo-{day}.db"
+    if target.exists():
+        return None
+    db.backup(target)
+    for old in sorted(Path(cfg.backup_dir).glob("fernimmo-*.db"))[:-cfg.backup_keep]:
+        old.unlink(missing_ok=True)
+    log.info("Datensicherung: %s", target)
+    return str(target)
 
 
 def reprocess(cfg: Config, db: DB) -> int:
     """Wertet alle gespeicherten Inserate neu aus (nach Änderungen an Profilen, Regeln oder
     Suchgebiet). Ohne Netzwerk: Lage kommt aus der Datenbank bzw. dem Geocoding-Cache."""
-    area = load_area(db)
+    ensure_searches(cfg, db)
     geocoder = Geocoder(db, {**cfg.geocoding, "enabled": False})
-    profiles = effective_profiles(cfg, db)
+    searches = load_searches(db)
+    fw = fw_filter(db)
     n = 0
     for row in db.all_for_reprocess():
         raw = RawListing(
@@ -218,7 +237,7 @@ def reprocess(cfg: Config, db: DB) -> int:
             listing_type=row["listing_type"], image_url=row["image_url"],
             lat=row.get("lat"), lon=row.get("lon"), geo_precision=row.get("geo_precision"),
         )
-        listing, reasons = evaluate(raw, cfg, geocoder, area, profiles)
+        listing, reasons = evaluate(raw, cfg, geocoder, searches, fw)
         db.upsert(listing, raw.structured, reasons, track_changes=False)
         n += 1
     return n
@@ -244,6 +263,10 @@ class Scheduler(threading.Thread):
 
     def run(self) -> None:
         while True:
+            try:
+                backup_if_due(self.cfg, self.db)
+            except Exception:  # noqa: BLE001 - Sicherung darf die Suche nicht stoppen
+                log.exception("Datensicherung fehlgeschlagen")
             if in_quiet_hours(self.cfg) and not self.trigger.is_set():
                 log.info("Ruhezeit – kein Suchlauf")
             else:

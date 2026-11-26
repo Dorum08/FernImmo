@@ -38,6 +38,8 @@ class Listing:
     last_seen: str = ""
     match_level: str = "none"
     matched_profiles: list[str] = field(default_factory=list)
+    matched_ids: list[int] = field(default_factory=list)
+    notify_level: str = "none"   # beste Stufe über Suchen mit eingeschalteter Meldung
     status: str = "neu"
     duplicate_of: int | None = None
     image_url: str | None = None

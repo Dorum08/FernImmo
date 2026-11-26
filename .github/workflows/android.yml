@@ -1,0 +1,43 @@
+name: Android-App
+
+on:
+  push:
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # Release mit der APK anlegen
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: APK bauen
+        working-directory: android
+        env:
+          # Eigener Signierschlüssel optional über Repository-Secrets
+          FERNIMMO_KEYSTORE_PASSWORD: ${{ secrets.FERNIMMO_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$FERNIMMO_KEYSTORE_PASSWORD" ]; then unset FERNIMMO_KEYSTORE_PASSWORD; fi
+          gradle assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk ../FernImmo.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FernImmo-apk
+          path: FernImmo.apk
+      - name: Als Release veröffentlichen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="app-v1.0.${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" FernImmo.apk --target "$GITHUB_SHA" --latest \
+            --title "FernImmo-App 1.0.${GITHUB_RUN_NUMBER}" \
+            --notes "Android-App (APK) für FernImmo. Installation: APK auf dem Handy öffnen, Installation aus dieser Quelle erlauben. Updates einfach drüber installieren."

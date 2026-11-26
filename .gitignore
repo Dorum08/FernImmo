@@ -5,3 +5,7 @@ __pycache__/
 data/
 config.yaml
 .env
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

@@ -1,14 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Suche – FernImmo{% endblock %}
+{% block title %}Suchen – FernImmo{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="/static/leaflet/leaflet.css">
 <script src="/static/leaflet/leaflet.js"></script>
 <script src="/static/fernimmo-map.js"></script>
 {% endblock %}
 {% block content %}
-<h2 style="margin-top:0">Suche: Kriterien &amp; Gebiet</h2>
+{% set FLAG_LABELS = {"gesuch": "Gesuche", "versteigerung": "Zwangsversteigerungen", "erbpacht": "Erbpacht",
+  "vermietet": "vermietete Wohnungen", "denkmal": "Denkmalschutz", "wbs": "WBS nötig", "senioren": "Seniorenwohnen",
+  "tausch": "Tauschwohnungen", "wg": "WG-Zimmer", "befristet": "befristet / Zwischenmiete"} %}
+<h2 style="margin-top:0">Suchen</h2>
+<div class="search-tabs">
+  {% for x in searches %}
+  <a class="search-tab {{ 'on' if cur and x.id == cur.id }}" href="/suche?id={{ x.id }}">
+    {{ x.name }}{% if not x.active %} ⏸{% elif not x.notify %} 🔕{% endif %}</a>
+  {% endfor %}
+  <button type="button" id="new-search" class="small-btn">+ Neue Suche</button>
+</div>
 <div id="status" class="card small" {% if not reprocessing %}hidden{% endif %}>⏳ Inserate werden neu bewertet …</div>
 
+{% if cur %}{% set c = cur.criteria %}
 <div class="area-layout">
   <div>
     <form id="goto" class="toolbar" onsubmit="return false">
@@ -38,22 +49,52 @@
       <div id="circle-msg" class="small muted"></div>
     </div>
     <div id="map" class="map-big"></div>
-    <p class="muted small">Eine Wohnung zählt als „im Gebiet“, wenn ihre PLZ ausgewählt ist <b>oder</b> sie in einer
-      Fläche bzw. einem Umkreis liegt. Ist nur die PLZ bekannt und das PLZ-Gebiet schneidet eine Fläche, gilt die Lage
-      als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Angabe aus <code>config.yaml</code>.
+    <p class="muted small">Eine Wohnung liegt im Gebiet dieser Suche, wenn ihre PLZ ausgewählt ist <b>oder</b> sie in
+      einer Fläche bzw. einem Umkreis liegt. Ist nur die PLZ bekannt und das PLZ-Gebiet schneidet eine Fläche, gilt die
+      Lage als unklar (möglicher Treffer). <b>Ohne PLZ und Flächen sucht die Suche bundesweit.</b>
       PLZ-Grenzen: © OpenStreetMap-Mitwirkende (ODbL), Stand Februar 2026.</p>
   </div>
   <aside>
-    <form class="card" id="criteria" onsubmit="return false">
-      <h3 style="margin-top:0">Suchkriterien</h3>
-      <div class="crit-grid">
-        <label>Zimmer von<select name="rooms_min">{% for v in room_steps %}<option value="{{ v if v else '' }}" {% if criteria.rooms_min == v %}selected{% endif %}>{{ v|num("", 1 if v % 1 else 0) if v else "beliebig" }}</option>{% endfor %}</select></label>
-        <label>Zimmer bis<select name="rooms_max">{% for v in room_steps %}<option value="{{ v if v else '' }}" {% if criteria.rooms_max == v %}selected{% endif %}>{{ v|num("", 1 if v % 1 else 0) if v else "beliebig" }}</option>{% endfor %}</select></label>
-        <label>Kaufpreis bis €<input type="number" name="price_max" step="5000" min="0" value="{{ criteria.price_max|int if criteria.price_max }}" placeholder="beliebig"></label>
-        <label>Wohnfläche ab m²<input type="number" name="area_min" step="1" min="0" value="{{ criteria.area_min|int if criteria.area_min }}" placeholder="beliebig"></label>
+    <div class="card">
+      <label>Name der Suche<input id="s-name" value="{{ cur.name }}" maxlength="80"></label>
+      <div class="check-row">
+        <label class="inline"><input type="checkbox" id="s-active" {{ "checked" if cur.active }}> aktiv</label>
+        <label class="inline"><input type="checkbox" id="s-notify" {{ "checked" if cur.notify }}> Benachrichtigungen</label>
       </div>
-      <p class="small muted" style="margin:6px 0 0">Halbe Zimmer zählen mit: „1 bis 2“ findet 1, 1,5 und 2 Zimmer.
-        Gilt für alle Suchprofile und wird sofort angewendet.</p>
+      <div class="check-row">
+        <button type="button" id="s-copy" class="small-btn">Kopieren</button>
+        <button type="button" id="s-delete" class="small-btn" {{ "disabled" if searches|length < 2 }}>Löschen</button>
+        <a class="small" href="/?search={{ cur.id }}">Treffer dieser Suche →</a>
+      </div>
+      <p id="s-msg" class="small" style="margin:4px 0 0"></p>
+    </div>
+    <form class="card" id="criteria" style="margin-top:10px" onsubmit="return false">
+      <h3 style="margin-top:0">Kriterien</h3>
+      <div class="check-row">
+        <label class="inline"><input type="checkbox" name="lt_kauf" {{ "checked" if "kauf" in c.listing_types }}> Kauf</label>
+        <label class="inline"><input type="checkbox" name="lt_miete" {{ "checked" if "miete" in c.listing_types }}> Miete</label>
+      </div>
+      <div class="crit-grid">
+        <label>Zimmer von<select name="rooms_min">{% for v in room_steps %}<option value="{{ v if v else '' }}" {% if c.rooms_min == v %}selected{% endif %}>{{ v|num("", 1 if v % 1 else 0) if v else "beliebig" }}</option>{% endfor %}</select></label>
+        <label>Zimmer bis<select name="rooms_max">{% for v in room_steps %}<option value="{{ v if v else '' }}" {% if c.rooms_max == v %}selected{% endif %}>{{ v|num("", 1 if v % 1 else 0) if v else "beliebig" }}</option>{% endfor %}</select></label>
+        <label>Preis bis €<input type="number" name="price_max" step="5000" min="0" value="{{ c.price_max|int if c.price_max }}" placeholder="beliebig"></label>
+        <label>Baujahr ab<input type="number" name="year_min" step="1" min="1800" max="2100" value="{{ c.year_min|int if c.year_min }}" placeholder="beliebig"></label>
+        <label>Fläche ab m²<input type="number" name="area_min" step="1" min="0" value="{{ c.area_min|int if c.area_min }}" placeholder="beliebig"></label>
+        <label>Fläche bis m²<input type="number" name="area_max" step="1" min="0" value="{{ c.area_max|int if c.area_max }}" placeholder="beliebig"></label>
+      </div>
+      <label style="margin-top:8px">Heizung<select name="heating">
+        {% for v, t in [("fernwaerme", "nur Fernwärme"), ("fern_nah", "Fern- oder Nahwärme"), ("egal", "egal")] %}
+        <option value="{{ v }}" {{ "selected" if heating == v }}>{{ t }}</option>{% endfor %}</select></label>
+      <label style="margin-top:6px">Heizung nicht angegeben<select name="unknown_heating">
+        <option value="teilweise" {{ "selected" if c.unknown_heating == "teilweise" }}>als möglichen Treffer melden</option>
+        <option value="ignorieren" {{ "selected" if c.unknown_heating == "ignorieren" }}>ignorieren</option></select></label>
+      <div class="small muted" style="margin-top:8px">Ausschließen:</div>
+      <div class="flag-grid">
+        {% for f in flag_choices %}<label class="inline small"><input type="checkbox" name="flag" value="{{ f }}" {{ "checked" if f in c.exclude_flags }}> {{ FLAG_LABELS[f] }}</label>{% endfor %}
+      </div>
+      <label style="margin-top:6px">Stichwörter ausschließen (Komma-getrennt)
+        <input name="exclude_keywords" value="{{ c.exclude_keywords|join(', ') }}" placeholder="z.B. Bieterverfahren, Hochparterre"></label>
+      <p class="small muted" style="margin:6px 0 0">Halbe Zimmer zählen mit: „1 bis 2“ findet 1, 1,5 und 2 Zimmer.</p>
       <p id="crit-msg" class="small" style="margin:4px 0 0"></p>
     </form>
     <div class="card" style="margin-top:10px">
@@ -70,22 +111,30 @@
     <div class="card" style="margin-top:10px">
       <h3 style="margin-top:0">Flächen &amp; Umkreise</h3>
       <ul id="area-list" class="area-list"></ul>
-      <p class="muted small">Fernwärme-Gebiete (rot) sind nur ein Hinweis: Steht im Inserat keine Heizung, wird
-        „liegt im Fernwärme-Gebiet“ angezeigt. Netzpläne gibt es beim örtlichen Versorger.</p>
+      <h3>Fernwärme-Gebiete <span class="small muted">(für alle Suchen)</span></h3>
+      <ul id="fw-list" class="area-list"></ul>
+      <p class="muted small">Fernwärme-Gebiete sind ein Hinweis: Steht im Inserat keine Heizung, wird „liegt im
+        Fernwärme-Gebiet“ angezeigt. Netzpläne gibt es beim örtlichen Versorger bzw. im kommunalen Wärmeplan.</p>
     </div>
   </aside>
 </div>
 
 <script>
 (async () => {
+  const SID = {{ cur.id }};
   const map = FI.map("map", {{ center|tojson }}, {{ zoom }});
   window.FI_MAP = map;
-  const state = await FI.json("/api/areas");
-  let selected = new Set(state.plz);
+  const state = await FI.json("/api/areas?search=" + SID);
+  let selected = new Set({{ cur.plz|tojson }});
   const areaLayers = {};
   let drawing = null;   // Stopp-Funktion während Freihand-Zeichnen
   const $ = id => document.getElementById(id);
   const idx = await FI.plzIndex();
+  const patch = body => FI.json(`/api/searches/${SID}`, {method: "PATCH", body: JSON.stringify(body)});
+  const flash = (id, text, ok = true) => {
+    $(id).textContent = text; $(id).className = "small " + (ok ? "" : "fw-nein");
+    if (ok) setTimeout(() => $(id).textContent = "", 2500);
+  };
 
   // --- Ort suchen ----------------------------------------------------------
   $("goto-btn").onclick = async () => {
@@ -97,18 +146,48 @@
     } catch (e) { alert("Ort nicht gefunden."); }
   };
 
-  // --- Suchkriterien -------------------------------------------------------
+  // --- Suche verwalten -----------------------------------------------------
+  $("s-name").addEventListener("change", async e => {
+    try { await patch({name: e.target.value}); flash("s-msg", "✅ umbenannt"); setTimeout(() => location.reload(), 600); }
+    catch (err) { flash("s-msg", "Name darf nicht leer sein.", false); }
+  });
+  $("s-active").addEventListener("change", async e => { await patch({active: e.target.checked}); busy(); });
+  $("s-notify").addEventListener("change", async e => { await patch({notify: e.target.checked}); flash("s-msg", "✅ gespeichert"); });
+  $("s-copy").onclick = async () => {
+    const name = prompt("Name der Kopie:", {{ cur.name|tojson }} + " (Kopie)");
+    if (!name) return;
+    const r = await FI.json("/api/searches", {method: "POST", body: JSON.stringify({name, copy_from: SID})});
+    location.href = "/suche?id=" + r.id;
+  };
+  $("s-delete").onclick = async () => {
+    if (!confirm({{ ("Suche „" ~ cur.name ~ "“ mit ihren Flächen löschen?")|tojson }})) return;
+    await FI.json(`/api/searches/${SID}`, {method: "DELETE"});
+    location.href = "/suche";
+  };
+  $("new-search").onclick = async () => {
+    const name = prompt("Name der neuen Suche:", "Neue Suche");
+    if (!name) return;
+    const r = await FI.json("/api/searches", {method: "POST", body: JSON.stringify({name})});
+    location.href = "/suche?id=" + r.id;
+  };
+
+  // --- Kriterien -----------------------------------------------------------
   const crit = $("criteria");
   crit.addEventListener("change", async () => {
-    const v = {};
-    for (const el of crit.elements) v[el.name] = el.value === "" ? null : parseFloat(el.value) || null;
-    if (v.rooms_min && v.rooms_max && v.rooms_min > v.rooms_max) {
-      $("crit-msg").textContent = "„Zimmer von“ ist größer als „bis“."; return;
+    const f = crit.elements, v = {};
+    v.listing_types = [f.lt_kauf.checked && "kauf", f.lt_miete.checked && "miete"].filter(Boolean);
+    for (const k of ["rooms_min", "rooms_max", "price_max", "area_min", "area_max", "year_min"]) v[k] = f[k].value || null;
+    v.heating = f.heating.value;
+    v.unknown_heating = f.unknown_heating.value;
+    v.exclude_flags = [...crit.querySelectorAll("input[name=flag]:checked")].map(x => x.value);
+    v.exclude_keywords = f.exclude_keywords.value;
+    try {
+      await patch({criteria: v});
+      flash("crit-msg", "✅ gespeichert");
+      busy();
+    } catch (err) {
+      flash("crit-msg", (err.message.match(/"detail":"([^"]+)"/) || [, "Ungültige Eingabe"])[1], false);
     }
-    await FI.json("/api/criteria", {method: "PUT", body: JSON.stringify(v)});
-    $("crit-msg").textContent = "✅ gespeichert";
-    setTimeout(() => $("crit-msg").textContent = "", 2000);
-    busy();
   });
 
   // --- PLZ-Auswahl ---------------------------------------------------------
@@ -153,7 +232,7 @@
   function savePlz() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
-      const r = await FI.json("/api/search-plz", {method: "PUT", body: JSON.stringify({plz: [...selected]})});
+      const r = await patch({plz: [...selected]});
       selected = new Set(r.plz);
       refreshPlz();
       busy();
@@ -192,7 +271,9 @@
     areaLayers[a.id] = layer;
   }
   function renderList(areas) {
-    $("area-list").innerHTML = areas.length ? "" : '<li class="muted small">Noch keine – oben „Fläche zeichnen“ oder „Umkreis“ wählen.</li>';
+    const mine = areas.filter(a => a.kind === "search"), fw = areas.filter(a => a.kind === "fw");
+    $("area-list").innerHTML = mine.length ? "" : '<li class="muted small">Keine – oben „Fläche zeichnen“ oder „Umkreis“ wählen.</li>';
+    $("fw-list").innerHTML = fw.length ? "" : '<li class="muted small">Keine</li>';
     for (const a of areas) {
       const li = document.createElement("li");
       li.innerHTML = `<span class="dot" style="background:${a.kind === "fw" ? FI.colors.fw : FI.colors.search}"></span>
@@ -214,7 +295,7 @@
         renderList(areas);
         busy();
       };
-      $("area-list").appendChild(li);
+      $(a.kind === "fw" ? "fw-list" : "area-list").appendChild(li);
     }
   }
   const areas = state.areas;
@@ -230,7 +311,7 @@
       const name = prompt(kind === "fw" ? "Name des Fernwärme-Gebiets:" : "Name des Suchgebiets:",
                           kind === "fw" ? "Fernwärme" : "Suchgebiet " + (areas.filter(a => a.kind === kind).length + 1));
       if (name === null) return;
-      const r = await FI.json("/api/areas", {method: "POST", body: JSON.stringify({kind, name, geometry})});
+      const r = await FI.json("/api/areas", {method: "POST", body: JSON.stringify({kind, name, geometry, search_id: SID})});
       const a = {id: r.id, kind, name, geometry, created_by: {{ user|tojson }}};
       areas.push(a); addAreaLayer(a); renderList(areas); busy();
     }, () => { drawing = null; resetHint(); });
@@ -298,7 +379,7 @@
   $("circle-save").onclick = async () => {
     if (!circleCenter) return;
     const name = $("circle-name").value.trim() || `${kmText(radius())} um ${circleLabel || "Punkt"}`;
-    const payload = {kind: "search", name, center: circleCenter, radius_km: radius()};
+    const payload = {kind: "search", name, center: circleCenter, radius_km: radius(), search_id: SID};
     const r = await FI.json("/api/areas", {method: "POST", body: JSON.stringify(payload)});
     const a = {id: r.id, kind: "search", name, radius_km: radius(), center_lat: circleCenter[0],
                center_lon: circleCenter[1], created_by: {{ user|tojson }}};
@@ -319,4 +400,7 @@
   }
 })();
 </script>
+{% else %}
+<p class="card">Noch keine Suche angelegt. <button type="button" class="small-btn" onclick="(async()=>{const r=await FI.json('/api/searches',{method:'POST',body:JSON.stringify({name:'Meine Suche'})});location.href='/suche?id='+r.id})()">Erste Suche anlegen</button></p>
+{% endif %}
 {% endblock %}

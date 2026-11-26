@@ -60,7 +60,7 @@ class FakeNotifier:
     def __init__(self):
         self.msgs = []
 
-    def send(self, subject, body, url=None):
+    def send(self, subject, body, url=None, listing_id=None):
         self.msgs.append((subject, body))
 
 
@@ -283,28 +283,31 @@ def test_area_api_map_and_export(tmp_path, monkeypatch):
     assert db.get(lid)["geo_precision"] == "plz" and db.get(lid)["plz"] == "90443"
 
     # Suchgebiet ohne 90443 -> kein Treffer mehr
-    r = c.put("/api/search-plz", json={"plz": ["90402", "90403", "kaputt"]})
+    sid = db.searches()[0]["id"]
+    r = c.patch(f"/api/searches/{sid}", json={"plz": ["90402", "90403", "kaputt"]})
     assert r.json()["plz"] == ["90402", "90403"]
     assert db.get(lid)["match_level"] == "none"
     # Freihand-Fläche, die 90443 (Gostenhof) überdeckt -> Lage unklar, aber möglicher Treffer
     square = {"type": "Polygon", "coordinates": [[[11.04, 49.44], [11.07, 49.44], [11.07, 49.46], [11.04, 49.46], [11.04, 49.44]]]}
-    aid = c.post("/api/areas", json={"kind": "search", "name": "Gostenhof", "geometry": square}).json()["id"]
+    aid = c.post("/api/areas", json={"kind": "search", "name": "Gostenhof", "geometry": square,
+                                     "search_id": sid}).json()["id"]
     assert db.get(lid)["match_level"] == "teilweise"
     assert "Lage unklar" in " ".join(db.get(lid)["match_reasons"])
-    assert c.post("/api/areas", json={"kind": "search", "geometry": {"type": "Point"}}).status_code == 400
+    assert c.post("/api/areas", json={"kind": "search", "geometry": {"type": "Point"}, "search_id": sid}).status_code == 400
+    assert c.post("/api/areas", json={"kind": "search", "geometry": square}).status_code == 400   # ohne Suche
     assert c.post("/api/areas", json={"kind": "xyz", "geometry": square}).status_code == 400
-    areas = c.get("/api/areas").json()
+    areas = c.get(f"/api/areas?search={sid}").json()
     assert areas["plz"] == ["90402", "90403"] and areas["areas"][0]["name"] == "Gostenhof"
     c.patch(f"/api/areas/{aid}", json={"name": "Gostenhof/Bärenschanze"})
     assert db.areas()[0]["name"] == "Gostenhof/Bärenschanze"
     # PLZ wieder aufnehmen -> Volltreffer
-    c.put("/api/search-plz", json={"plz": ["90443"]})
+    c.patch(f"/api/searches/{sid}", json={"plz": ["90443"]})
     assert db.get(lid)["match_level"] == "voll"
     assert c.delete(f"/api/areas/{aid}").status_code == 200
     assert c.delete(f"/api/areas/{aid}").status_code == 404
 
     # Seiten
-    for url in ("/", "/karte", "/gebiet", f"/listing/{lid}", "/static/leaflet/leaflet.js"):
+    for url in ("/", "/karte", "/gebiet", "/suche", f"/listing/{lid}", "/static/leaflet/leaflet.js"):
         assert c.get(url).status_code == 200, url
     r = c.get("/plz/90.geojson")
     assert r.status_code == 200 and r.headers["content-encoding"] == "gzip"
@@ -348,7 +351,8 @@ def test_radius_search_web(tmp_path, monkeypatch):
     assert 49.44 < g["lat"] < 49.46 and "90403" in g["label"]
 
     # 1 km um den Plärrer: Gostenhof-Wohnung (ca. 0,6 km) liegt drin
-    r = c.post("/api/areas", json={"kind": "search", "name": "Plärrer", "center": [49.4486, 11.0631], "radius_km": 1})
+    r = c.post("/api/areas", json={"kind": "search", "name": "Plärrer", "center": [49.4486, 11.0631], "radius_km": 1,
+                                   "search_id": db.searches()[0]["id"]})
     assert r.status_code == 200
     area = db.areas("search")[0]
     assert area["radius_km"] == 1 and area["center_lat"] == 49.4486
@@ -357,12 +361,12 @@ def test_radius_search_web(tmp_path, monkeypatch):
     assert "km bis Plärrer" in page
     # Kleinerer Radius: 0,3 km -> außerhalb
     c.delete(f"/api/areas/{area['id']}")
-    c.post("/api/areas", json={"kind": "search", "center": [49.4486, 11.0631], "radius_km": 0.3})
+    c.post("/api/areas", json={"kind": "search", "center": [49.4486, 11.0631], "radius_km": 0.3, "search_id": db.searches()[0]["id"]})
     assert db.get(fw["id"])["match_level"] == "none"
     assert db.areas("search")[0]["name"] == "0,3 km Umkreis"
     # Ungültige Eingaben
-    assert c.post("/api/areas", json={"kind": "search", "center": [0, 0], "radius_km": 1}).status_code == 400
-    assert c.post("/api/areas", json={"kind": "search", "center": [49.4, 11.0], "radius_km": 500}).status_code == 400
-    assert c.post("/api/areas", json={"kind": "search", "center": "x", "radius_km": 1}).status_code == 400
+    assert c.post("/api/areas", json={"kind": "search", "center": [0, 0], "radius_km": 1, "search_id": db.searches()[0]["id"]}).status_code == 400
+    assert c.post("/api/areas", json={"kind": "search", "center": [49.4, 11.0], "radius_km": 500, "search_id": db.searches()[0]["id"]}).status_code == 400
+    assert c.post("/api/areas", json={"kind": "search", "center": "x", "radius_km": 1, "search_id": db.searches()[0]["id"]}).status_code == 400
     # Export enthält Entfernung
     assert "Entfernung km" in c.get("/export.csv?match=").content.decode("utf-8-sig").splitlines()[0]

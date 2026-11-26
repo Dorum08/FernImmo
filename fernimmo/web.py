@@ -23,7 +23,9 @@ from .config import Config
 from .db import DB
 from .geo import PLZ_DIR, Geocoder, circle_polygon, haversine_km, plz_center, plz_state, valid_geometry
 from .notify import HEATING_NAMES, fmt_num
-from .pipeline import CRITERIA_KEYS, Scheduler, reprocess
+from .pipeline import Scheduler, reprocess
+from .searches import (DEFAULT_CRITERIA, FLAG_CHOICES, clean_criteria, ensure_searches,
+                       heating_choice)
 
 STATUSES = ["neu", "favorit", "kontaktiert", "besichtigung", "ausgeblendet"]
 ANON_USER = "ich"
@@ -56,13 +58,15 @@ class Filters:
     rooms_min: str = ""
     rooms_max: str = ""
     price_max: str = ""
+    search: str = ""
 
     def search_args(self) -> dict:
         return dict(match=self.match or None, fernwaerme=self.fernwaerme or None, source=self.source or None,
                     status=self.status or None, listing_type=self.listing_type or None, q=self.q or None,
                     sort=self.sort, active_only=not self.inactive, hide_duplicates=not self.dupes,
                     liked=bool(self.liked), rooms_min=_num(self.rooms_min), rooms_max=_num(self.rooms_max),
-                    price_max=_num(self.price_max))
+                    price_max=_num(self.price_max),
+                    search_id=int(self.search) if self.search.isdigit() else None)
 
 
 class Reprocessor:
@@ -102,6 +106,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
     security = HTTPBasic(auto_error=bool(cfg.web_users))
     tz = ZoneInfo(cfg.timezone)
     reproc = Reprocessor(cfg, db, scheduler)
+    ensure_searches(cfg, db)
 
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters["num"] = fmt_num
@@ -119,7 +124,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
             return None
         d = r["data"]
         return costs(r.get("price"), d.get("area"), d.get("hausgeld"), d.get("flags"), cfg.calculator,
-                     state=plz_state(r.get("plz")))
+                     state=plz_state(r.get("plz")), rent_sqm=db.rent_estimate(r.get("plz")))
 
     templates.env.globals["calc_for"] = calc_for
 
@@ -135,7 +140,8 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
 
     def with_distance(rows: list[dict], sort: str) -> list[dict]:
         """Entfernung (Luftlinie) zum nächsten Umkreis-Mittelpunkt; optional danach sortieren."""
-        centers = [a for a in db.areas("search") if a.get("radius_km") is not None]
+        active = {s["id"] for s in db.searches() if s["active"]}
+        centers = [a for a in db.areas("search") if a.get("radius_km") is not None and a["search_id"] in active]
         for r in rows:
             r["distance"] = None
             if centers and r.get("lat") is not None:
@@ -149,17 +155,15 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
     def here_of(request: Request) -> str:
         return request.url.path + (f"?{request.url.query}" if request.url.query else "")
 
-    def criteria() -> dict:
-        """Aktuelle Suchkriterien: aus der Weboberfläche, sonst aus dem ersten Profil der config.yaml."""
-        saved = db.get_setting("criteria")
-        if saved is not None:
-            return saved
-        p = cfg.profiles[0] if cfg.profiles else None
-        return {k: getattr(p, k, None) for k in CRITERIA_KEYS}
-
-    def area_summary() -> dict:
-        return {"plz": db.get_setting("search_plz", []), "polygons": len(db.areas("search")),
-                "fw": len(db.areas("fw"))}
+    def search_list() -> list[dict]:
+        """Suchen mit Kurzinfo für Auswahllisten und die Übersicht."""
+        out = []
+        for srch in db.searches():
+            areas = db.areas("search", search_id=srch["id"])
+            srch["n_areas"] = len(areas)
+            srch["has_area"] = bool(srch["plz"] or areas)
+            out.append(srch)
+        return out
 
     # ------------------------------------------------------------------ Seiten
     @app.get("/", response_class=HTMLResponse)
@@ -168,8 +172,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         return templates.TemplateResponse(request, "index.html", {
             "rows": rows, "stats": db.stats(), "sources": list(cfg.sources), "statuses": STATUSES,
             "f": asdict(f), "runs": db.recent_runs(len(cfg.sources) or 1), "user": user,
-            "here": here_of(request), "query": request.url.query, "area": area_summary(),
-            "has_circles": any(a.get("radius_km") for a in db.areas("search")),
+            "here": here_of(request), "query": request.url.query, "searches": search_list(),
             "reprocessing": reproc.busy.is_set(),
         })
 
@@ -188,15 +191,32 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
     def map_page(request: Request, f: Filters = Depends(), user: str = Depends(auth)):
         return templates.TemplateResponse(request, "map.html", {
             "f": asdict(f), "user": user, "query": request.url.query, "center": cfg.map_center, "zoom": cfg.map_zoom,
-            "sources": list(cfg.sources), "statuses": STATUSES,
+            "sources": list(cfg.sources), "statuses": STATUSES, "searches": search_list(),
         })
 
-    @app.get("/gebiet", response_class=HTMLResponse)
-    def area_page(request: Request, user: str = Depends(auth)):
+    @app.get("/gebiet")
+    def old_area_page():
+        return RedirectResponse("/suche", status_code=301)
+
+    @app.get("/suche", response_class=HTMLResponse)
+    def search_page(request: Request, id: int | None = None, user: str = Depends(auth)):
+        ensure_searches(cfg, db)
+        searches = search_list()
+        cur = next((x for x in searches if x["id"] == id), searches[0] if searches else None)
         return templates.TemplateResponse(request, "area.html", {
             "user": user, "center": cfg.map_center, "zoom": cfg.map_zoom,
-            "reprocessing": reproc.busy.is_set(), "criteria": criteria(),
-            "room_steps": [None] + [x / 2 for x in range(2, 17)],
+            "reprocessing": reproc.busy.is_set(), "searches": searches, "cur": cur,
+            "heating": heating_choice(cur["criteria"]) if cur else "fernwaerme",
+            "flag_choices": FLAG_CHOICES, "room_steps": [None] + [x / 2 for x in range(2, 17)],
+        })
+
+    @app.get("/markt", response_class=HTMLResponse)
+    def market_page(request: Request, plz: str = "", art: str = "kauf", user: str = Depends(auth)):
+        plz = plz if plz.isdigit() and len(plz) <= 5 else ""
+        art = art if art in ("kauf", "miete") else "kauf"
+        return templates.TemplateResponse(request, "market.html", {
+            "user": user, "plz": plz, "art": art, "table": db.market_table(),
+            "trend_all": db.price_trend(art), "trend_plz": db.price_trend(art, plz) if plz else [],
         })
 
     @app.get("/runs", response_class=HTMLResponse)
@@ -330,9 +350,72 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         return JSONResponse({"points": db.map_points(rows), "without_location": sum(1 for r in rows if r["lat"] is None)})
 
     @app.get("/api/areas")
-    def api_areas(user: str = Depends(auth)):
-        return JSONResponse({"plz": db.get_setting("search_plz", []), "areas": db.areas(),
-                             "reprocessing": reproc.busy.is_set()})
+    def api_areas(search: int | None = None, user: str = Depends(auth)):
+        """Flächen einer Suche (search=ID) bzw. aller aktiven Suchen, dazu die Fernwärme-Gebiete."""
+        active = [x for x in db.searches() if x["active"] and (search is None or x["id"] == search)]
+        ids = {x["id"] for x in active}
+        areas = [a for a in db.areas() if a["kind"] == "fw" or a["search_id"] in ids]
+        plz = sorted({p for x in active for p in x["plz"]})
+        return JSONResponse({"plz": plz, "areas": areas, "reprocessing": reproc.busy.is_set()})
+
+    def _require_search(sid) -> dict:
+        try:
+            srch = db.get_search(int(sid))
+        except (TypeError, ValueError):
+            srch = None
+        if not srch:
+            raise HTTPException(400, "Unbekannte Suche")
+        return srch
+
+    @app.get("/api/searches")
+    def api_searches(user: str = Depends(auth)):
+        return JSONResponse(search_list())
+
+    @app.post("/api/searches")
+    def api_add_search(payload: dict = Body(...), user: str = Depends(auth)):
+        name = str(payload.get("name") or "").strip()[:80] or "Neue Suche"
+        src = _require_search(payload["copy_from"]) if payload.get("copy_from") else None
+        crit = dict(src["criteria"]) if src else dict(DEFAULT_CRITERIA)
+        sid = db.add_search(name, crit, list(src["plz"]) if src else [], user)
+        if src:
+            db.copy_search_areas(src["id"], sid)
+        _changed()
+        return {"id": sid}
+
+    @app.patch("/api/searches/{sid}")
+    def api_update_search(sid: int, payload: dict = Body(...), user: str = Depends(auth)):
+        srch = _require_search(sid)
+        fields: dict = {}
+        if "name" in payload:
+            name = str(payload["name"] or "").strip()[:80]
+            if not name:
+                raise HTTPException(400, "Name fehlt")
+            fields["name"] = name
+        for k in ("active", "notify"):
+            if k in payload:
+                fields[k] = 1 if payload[k] else 0
+        if "criteria" in payload:
+            try:
+                fields["criteria"] = clean_criteria(payload["criteria"] or {}, srch["criteria"])
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from None
+        if "plz" in payload:
+            # ganze PLZ oder PLZ-Anfänge (1–5 Ziffern); was ein anderer Anfang schon abdeckt, entfällt
+            raw = {str(p) for p in payload.get("plz") or [] if str(p).isdigit() and 1 <= len(str(p)) <= 5}
+            fields["plz"] = sorted(p for p in raw if not any(p != q and p.startswith(q) for q in raw))
+        db.update_search(sid, **fields)
+        if set(fields) - {"name"}:
+            _changed()
+        return db.get_search(sid)
+
+    @app.delete("/api/searches/{sid}")
+    def api_delete_search(sid: int, user: str = Depends(auth)):
+        _require_search(sid)
+        if len(db.searches()) <= 1:
+            raise HTTPException(400, "Die letzte Suche kann nicht gelöscht werden")
+        db.delete_search(sid)
+        _changed()
+        return {"ok": True}
 
     def _changed() -> None:
         reproc.trigger(wait=sync_reprocess)
@@ -343,6 +426,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         center, radius = payload.get("center"), payload.get("radius_km")
         if kind not in ("search", "fw"):
             raise HTTPException(400, "Ungültiges Gebiet")
+        search_id = _require_search(payload.get("search_id"))["id"] if kind == "search" else None
         if center is not None or radius is not None:
             # Umkreissuche: Mittelpunkt + Radius; das Polygon dient nur der Anzeige/PLZ-Überschneidung
             try:
@@ -356,7 +440,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
             raise HTTPException(400, "Ungültiges Gebiet")
         default = f"{radius:g} km Umkreis".replace(".", ",") if radius else ("Suchgebiet" if kind == "search" else "Fernwärme")
         aid = db.add_area(kind, str(payload.get("name") or default), geom, user,
-                          center=center, radius_km=radius)
+                          center=center, radius_km=radius, search_id=search_id)
         _changed()
         return {"id": aid}
 
@@ -371,30 +455,6 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
             raise HTTPException(404)
         _changed()
         return {"ok": True}
-
-    @app.put("/api/criteria")
-    def api_criteria(payload: dict = Body(...), user: str = Depends(auth)):
-        out = {}
-        for k in CRITERIA_KEYS:
-            v = payload.get(k)
-            try:
-                out[k] = float(v) if v not in (None, "") and float(v) > 0 else None
-            except (TypeError, ValueError):
-                raise HTTPException(400, f"Ungültiger Wert für {k}")
-        if out["rooms_min"] and out["rooms_max"] and out["rooms_min"] > out["rooms_max"]:
-            raise HTTPException(400, "Zimmer von > bis")
-        db.set_setting("criteria", out)
-        _changed()
-        return out
-
-    @app.put("/api/search-plz")
-    def api_search_plz(payload: dict = Body(...), user: str = Depends(auth)):
-        # ganze PLZ oder PLZ-Anfänge (1–4 Ziffern); Anfänge, die eine andere Auswahl schon abdeckt, entfallen
-        raw = {str(p) for p in payload.get("plz", []) if str(p).isdigit() and 1 <= len(str(p)) <= 5}
-        plz = sorted(p for p in raw if not any(p != q and p.startswith(q) for q in raw))
-        db.set_setting("search_plz", plz)
-        _changed()
-        return {"plz": plz}
 
     geocoder = Geocoder(db, cfg.geocoding)
 

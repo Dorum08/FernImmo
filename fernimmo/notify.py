@@ -71,40 +71,61 @@ def format_message(l: dict[str, Any], kind: str = "neu", old_price: float | None
         lines.append("Hinweis: " + "; ".join(l["match_reasons"]))
     if d.get("flags"):
         lines.append("⚠️ " + ", ".join(d["flags"]))
+    if l.get("matched_profiles"):
+        lines.append("🔎 Suche: " + ", ".join(l["matched_profiles"]))
     lines.append(f"FernImmo-ID #{l['id']} · Quelle: {l['source']}")
     lines.append(l["url"])
     return lines[0], "\n".join(lines)
 
 
-class Notifier:
-    def __init__(self, cfg: dict[str, Any]):
-        self.cfg = cfg or {}
+def telegram_keyboard(listing_id: int, url: str | None, likes: int = 0, hidden: bool = False,
+                      public_url: str | None = None) -> dict:
+    """Knöpfe unter einer Telegram-Meldung: Like, Ausblenden, Inserat, Details."""
+    row1 = [{"text": f"♥ Like ({likes})" if likes else "♡ Like", "callback_data": f"like:{listing_id}"},
+            {"text": "↩ Einblenden" if hidden else "🙈 Ausblenden",
+             "callback_data": f"{'unhide' if hidden else 'hide'}:{listing_id}"}]
+    row2 = []
+    if url:
+        row2.append({"text": "Inserat ↗", "url": url})
+    if public_url:
+        row2.append({"text": "Details in FernImmo", "url": f"{public_url.rstrip('/')}/listing/{listing_id}"})
+    return {"inline_keyboard": [row1] + ([row2] if row2 else [])}
 
-    def send(self, subject: str, body: str, url: str | None = None) -> None:
+
+class Notifier:
+    def __init__(self, cfg: dict[str, Any], public_url: str | None = None):
+        self.cfg = cfg or {}
+        self.public_url = public_url
+
+    def send(self, subject: str, body: str, url: str | None = None, listing_id: int | None = None) -> None:
         sent = False
         for name, fn in (("telegram", self._telegram), ("ntfy", self._ntfy), ("email", self._email)):
             c = self.cfg.get(name) or {}
             if not c.get("enabled"):
                 continue
             try:
-                fn(c, subject, body, url)
+                fn(c, subject, body, url, listing_id)
                 sent = True
             except Exception as e:  # noqa: BLE001 - ein Kanal darf die anderen nicht stoppen
                 log.error("Benachrichtigung über %s fehlgeschlagen: %s", name, e)
         if not sent:
             log.info("Keine Benachrichtigung verschickt (kein Kanal aktiv): %s", subject)
 
-    @staticmethod
-    def _telegram(c, subject, body, url):
-        r = httpx.post(
-            f"https://api.telegram.org/bot{c['bot_token']}/sendMessage",
-            json={"chat_id": c["chat_id"], "text": body, "disable_web_page_preview": False},
-            timeout=20,
-        )
+    def _telegram(self, c, subject, body, url, listing_id=None):
+        payload: dict[str, Any] = {"chat_id": c["chat_id"], "text": body, "disable_web_page_preview": False}
+        if listing_id and c.get("buttons", True):
+            payload["reply_markup"] = telegram_keyboard(listing_id, url, public_url=self.public_url)
+        api = f"https://api.telegram.org/bot{c['bot_token']}/sendMessage"
+        r = httpx.post(api, json=payload, timeout=20)
+        if r.status_code == 400 and "reply_markup" in payload:
+            # z. B. ungültige URL im Knopf: lieber ohne Details-Knopf als gar keine Meldung
+            log.warning("Telegram lehnt Knöpfe ab (%s) – sende ohne Details-Link", r.text[:200])
+            payload["reply_markup"] = telegram_keyboard(listing_id, url)
+            r = httpx.post(api, json=payload, timeout=20)
         r.raise_for_status()
 
     @staticmethod
-    def _ntfy(c, subject, body, url):
+    def _ntfy(c, subject, body, url, listing_id=None):
         headers = {"Title": subject.encode("utf-8").decode("latin-1", "ignore"), "Tags": "house"}
         if url:
             headers["Click"] = url
@@ -115,7 +136,7 @@ class Notifier:
         r.raise_for_status()
 
     @staticmethod
-    def _email(c, subject, body, url):
+    def _email(c, subject, body, url, listing_id=None):
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = c.get("from") or c["username"]

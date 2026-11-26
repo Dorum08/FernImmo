@@ -2,7 +2,6 @@
 import pytest
 
 from fernimmo import pipeline
-from fernimmo.config import Config
 from fernimmo.db import DB
 from fernimmo.extract import extract
 from fernimmo.fetch import BlockedError, _check_blocked
@@ -64,19 +63,58 @@ def test_geocoding_needs_place_and_plausible_result(monkeypatch):
     assert g.locate("Fürther Straße 12", "90443", None)[2] == "adresse"
 
 
-def test_prefilter_ignores_ambiguous_snippets(tmp_path):
-    cfg = Config({"db_path": str(tmp_path / "x.db"),
-                  "profiles": [{"name": "p", "listing_types": ["kauf"], "rooms_min": 1, "rooms_max": 2}]})
-    profs, area = cfg.profiles, AreaFilter()
+def test_prefilter_ignores_ambiguous_snippets():
+    from fernimmo.searches import DEFAULT_CRITERIA, Search, profile_for
+    c = {**DEFAULT_CRITERIA, "rooms_min": 1, "rooms_max": 2, "heating_required": []}
+    searches = [Search(1, "s", True, True, c, [], profile_for("s", c), AreaFilter())]
     hit = lambda s: SearchHit("1", "u", "kauf", snippet=s)
-    assert pipeline.prefiltered(hit("Schöne ETW 4 Zimmer 98 m² 90443 Nürnberg"), cfg, area, profs)
+    assert pipeline.prefiltered(hit("Schöne ETW 4 Zimmer 98 m² 90443 Nürnberg"), searches)
     # Kachel nennt 2 und 3 Zimmer -> nicht aussortieren
-    assert not pipeline.prefiltered(hit("2 Zimmer ETW, im Haus auch 3 Zimmer frei"), cfg, area, profs)
-    assert not pipeline.prefiltered(hit("4 Zimmer"), cfg, area, [])     # ohne Profil nie aussortieren
-    assert not pipeline.prefiltered(hit(""), cfg, area, profs)
+    assert not pipeline.prefiltered(hit("2 Zimmer ETW, im Haus auch 3 Zimmer frei"), searches)
+    assert not pipeline.prefiltered(hit("4 Zimmer"), [])     # ohne Suche nie aussortieren
+    assert not pipeline.prefiltered(hit(""), searches)
 
 
 def test_ein_zimmer_in_prose_is_not_room_count():
     assert extract("Schöne Wohnung, ein Zimmer mit Balkon zum Hof.", title="ETW im Altbau")["rooms"] is None
     assert extract("", title="Einzimmerwohnung in Gostenhof")["rooms"] == 1
     assert extract("", title="Ein-Zimmer-Apartment")["rooms"] == 1
+
+
+def test_source_down_alert_and_recovery(tmp_path, monkeypatch):
+    cfg = make_cfg(tmp_path)
+    fake = FakeFetcher(pages())
+    monkeypatch.setattr(pipeline, "make_fetcher", lambda *a, **k: fake)
+    db, notifier = DB(cfg.db_path), FakeNotifier()
+    pipeline.run_once(cfg, db, notifier)
+    n = len(notifier.msgs)
+    from test_pipeline import SEARCH_URL
+    good = fake.pages[SEARCH_URL]
+    fake.pages[SEARCH_URL] = "<html><body>Wartungsarbeiten</body></html>"   # Portal liefert nichts mehr
+    for _ in range(3):
+        pipeline.run_once(cfg, db, notifier)
+    alerts = [m for m in notifier.msgs[n:] if "liefert nichts" in m[0]]
+    assert len(alerts) == 1 and "seit 3 Suchläufen" in alerts[0][1]
+    pipeline.run_once(cfg, db, notifier)                     # kein zweiter Alarm
+    assert len([m for m in notifier.msgs if "liefert nichts" in m[0]]) == 1
+    fake.pages[SEARCH_URL] = good
+    pipeline.run_once(cfg, db, notifier)
+    assert "wieder ok" in notifier.msgs[-1][0]
+
+
+def test_daily_backup(tmp_path, monkeypatch):
+    import sqlite3
+    cfg = make_cfg(tmp_path)
+    cfg.backup_keep = 2
+    monkeypatch.setattr(pipeline, "make_fetcher", lambda *a, **k: FakeFetcher(pages()))
+    db = DB(cfg.db_path)
+    pipeline.run_once(cfg, db, FakeNotifier())
+    bdir = tmp_path / "backups"
+    for d in ("2026-01-01", "2026-01-02", "2026-01-03"):
+        (bdir / f"fernimmo-{d}.db").parent.mkdir(exist_ok=True)
+        (bdir / f"fernimmo-{d}.db").write_text("alt")
+    path = pipeline.backup_if_due(cfg, db)
+    assert path and pipeline.backup_if_due(cfg, db) is None          # nur einmal pro Tag
+    n = sqlite3.connect(path).execute("SELECT COUNT(*) FROM listings").fetchone()[0]
+    assert n == 3
+    assert len(list(bdir.glob("fernimmo-*.db"))) == 2                 # nur die neuesten behalten

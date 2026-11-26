@@ -36,7 +36,9 @@ def annuity_month(loan: float, zins_pct: float, tilgung_pct: float) -> float:
 
 
 def costs(price: float | None, area: float | None, hausgeld: float | None, flags: list[str] | None,
-          p: dict[str, Any], rent_per_year: float | None = None, state: str | None = None) -> dict[str, Any] | None:
+          p: dict[str, Any], rent_per_year: float | None = None, state: str | None = None,
+          rent_sqm: tuple[float, str] | None = None) -> dict[str, Any] | None:
+    """rent_sqm: (Vergleichsmiete €/m², Herkunft) aus gesammelten Mietinseraten; sonst config-Vorgabe."""
     if not price:
         return None
     makler = 0.0 if "provisionsfrei" in (flags or []) else p["makler_pct"]
@@ -51,7 +53,8 @@ def costs(price: float | None, area: float | None, hausgeld: float | None, flags
         makler_pct=makler, grunderwerbsteuer_pct=grest, grunderwerbsteuer_von=grest_from, nebenkosten_pct=nk_pct, nebenkosten=round(nebenkosten), gesamt=round(total),
         darlehen=round(loan), rate=round(rate), hausgeld=hg, belastung=round(rate + hg),
     )
-    rent = rent_per_year or (area * p["miete_pro_qm"] * 12 if area else None)
+    out["miete_pro_qm"], out["miete_quelle"] = rent_sqm if rent_sqm else (p["miete_pro_qm"], "Vorgabe")
+    rent = rent_per_year or (area * out["miete_pro_qm"] * 12 if area else None)
     if rent:
         out["miete_jahr"] = round(rent)
         out["miete_geschaetzt"] = rent_per_year is None
