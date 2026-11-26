@@ -37,7 +37,7 @@ def test_bot_handles_like_and_hide(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "make_fetcher", lambda *a, **k: FakeFetcher(pages()))
     db = DB(cfg.db_path)
     pipeline.run_once(cfg, db, FakeNotifier())
-    lid = db.search()[0]["id"]
+    lid = next(r["id"] for r in db.search(match=None) if r["source_id"] == "111")
     bot = TelegramBot({"bot_token": "T", "chat_id": 42, "users": {111: "anna"}}, db, ["ich"])
     upd = lambda data, chat=42, user=111: {"update_id": 1, "callback_query": {
         "id": "q", "data": data, "from": {"id": user}, "message": {"message_id": 5, "chat": {"id": chat}}}}

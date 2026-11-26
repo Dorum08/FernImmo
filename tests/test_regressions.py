@@ -118,3 +118,47 @@ def test_daily_backup(tmp_path, monkeypatch):
     n = sqlite3.connect(path).execute("SELECT COUNT(*) FROM listings").fetchone()[0]
     assert n == 3
     assert len(list(bdir.glob("fernimmo-*.db"))) == 2                 # nur die neuesten behalten
+
+
+def test_csrf_blocked_from_foreign_site(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from fernimmo.web import create_app
+    cfg = make_cfg(tmp_path, users={"ich": "pw"})
+    cfg.public_url = "http://fernimmo.example:8080"
+    c = TestClient(create_app(cfg, DB(cfg.db_path)))
+    auth = ("ich", "pw")
+    assert c.post("/run", auth=auth, headers={"Origin": "https://boese.example"}, follow_redirects=False).status_code == 403
+    assert c.post("/run", auth=auth, headers={"Referer": "https://boese.example/x"}, follow_redirects=False).status_code == 403
+    assert c.post("/run", auth=auth, headers={"Origin": "http://testserver"}, follow_redirects=False).status_code == 303
+    assert c.post("/run", auth=auth, headers={"Origin": "http://fernimmo.example:8080"}, follow_redirects=False).status_code == 303
+    assert c.post("/run", auth=auth, follow_redirects=False).status_code == 303          # ohne Herkunft (z. B. curl)
+    assert c.get("/openapi.json").status_code == 404
+
+
+def test_javascript_links_are_never_stored(tmp_path, monkeypatch):
+    from fernimmo.sources.immoscout import ImmoScout24
+    page = '<a href="javascript:alert(1)//expose/1234567">x</a><a href="/expose/7654321">y</a>'
+    hits = ImmoScout24({}, FakeFetcher({})).search_hits(page, "https://www.immobilienscout24.de/Suche/x", "kauf")
+    assert [h.url for h in hits] == ["https://www.immobilienscout24.de/expose/7654321"]
+    from fernimmo.models import RawListing
+    raw = RawListing("s", "1", "javascript:alert(1)", "T", "", {}, "", "kauf", "javascript:alert(2)")
+    cfg = make_cfg(tmp_path)
+    try:
+        pipeline.evaluate(raw, cfg)
+        raise AssertionError("javascript-Link wurde akzeptiert")
+    except ValueError:
+        pass
+
+
+def test_initial_searches_created_once_under_concurrency(tmp_path):
+    import threading
+    from fernimmo.searches import ensure_searches
+    cfg = make_cfg(tmp_path)
+    db = DB(cfg.db_path)
+    ts = [threading.Thread(target=ensure_searches, args=(cfg, db)) for _ in range(8)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert len(db.searches()) == 1

@@ -51,6 +51,10 @@ def prefiltered(hit: SearchHit, searches: list[Search]) -> bool:
 
 def evaluate(raw: RawListing, cfg: Config, geocoder: Geocoder | None = None,
              searches: list[Search] | None = None, fw: AreaFilter | None = None) -> tuple[Listing, list[str]]:
+    if not raw.url.lower().startswith(("http://", "https://")):
+        raise ValueError(f"Ungültiger Inserats-Link: {raw.url[:80]}")
+    if raw.image_url and not raw.image_url.lower().startswith(("http://", "https://")):
+        raw.image_url = None
     data = extract(raw.text, raw.title, raw.structured)
     # Generischer "Preis" (z.B. Kleinanzeigen) = Kaltmiete bzw. Kaufpreis
     if data.get("price_generic"):
@@ -123,7 +127,11 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
             except Exception as e:  # noqa: BLE001
                 log.warning("[%s] Detailseite %s fehlgeschlagen: %s", name, hit.url, e)
                 continue
-            listing, reasons = evaluate(raw, cfg, geocoder, searches, fw)
+            try:
+                listing, reasons = evaluate(raw, cfg, geocoder, searches, fw)
+            except ValueError as e:
+                log.warning("[%s] Inserat übersprungen: %s", name, e)
+                continue
             lid, is_new, changes = db.upsert(listing, raw.structured, reasons)
             row = db.get(lid)
             price_drop = next((c for c in changes if c["field"] in ("purchase_price", "rent_cold")

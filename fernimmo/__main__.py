@@ -72,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
 
         from .pipeline import Scheduler
         from .web import create_app
+        from .searches import ensure_searches
+        ensure_searches(cfg, db)          # vor dem Start von Suchlauf und Weboberfläche
         scheduler = Scheduler(cfg, db, notifier)
         scheduler.start()
         tg = cfg.notify.get("telegram") or {}

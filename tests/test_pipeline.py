@@ -118,7 +118,7 @@ def test_run_end_to_end(env):
 def test_change_history_and_price_drop(env):
     cfg, db, notifier, fake = env
     pipeline.run_once(cfg, db, notifier)
-    lid = db.search()[0]["id"]
+    lid = next(r["id"] for r in db.search(match=None) if r["source_id"] == "111")
 
     # Anbieter senkt den Preis, ändert Hausgeld und Beschreibung
     fake.pages[URL_FW] = detail("Helle 2-Zi-ETW", "205.000", 2, 55,
@@ -152,7 +152,7 @@ def test_change_history_and_price_drop(env):
 def test_reprocess_does_not_log_changes(env):
     cfg, db, notifier, _ = env
     pipeline.run_once(cfg, db, notifier)
-    lid = db.search()[0]["id"]
+    lid = next(r["id"] for r in db.search(match=None) if r["source_id"] == "111")
     n = len(db.changes(lid))
     pipeline.reprocess(cfg, db)
     assert len(db.changes(lid)) == n
@@ -169,7 +169,7 @@ def test_first_run_summary(tmp_path, monkeypatch):
 def test_likes_and_comments(env):
     cfg, db, notifier, _ = env
     pipeline.run_once(cfg, db, notifier)
-    lid = db.search()[0]["id"]
+    lid = next(r["id"] for r in db.search(match=None) if r["source_id"] == "111")
     assert db.toggle_like(lid, "anna") is True
     assert db.toggle_like(lid, "ben") is True
     assert db.toggle_like(lid, "ben") is False
@@ -199,7 +199,7 @@ def test_web(tmp_path, monkeypatch):
     assert c.get("/", auth=("anna", "falsch")).status_code == 401
     r = c.get("/", auth=A)
     assert r.status_code == 200 and "Helle 2-Zi-ETW" in r.text and "3 Zimmer" not in r.text
-    lid = db.search()[0]["id"]
+    lid = next(r["id"] for r in db.search(match=None) if r["source_id"] == "111")
     assert f"#{lid}" in r.text
 
     # Like per Formular und per JSON
@@ -232,7 +232,7 @@ def test_web(tmp_path, monkeypatch):
 def test_relisting_detected(env):
     cfg, db, notifier, fake = env
     pipeline.run_once(cfg, db, notifier)
-    old_id = db.search()[0]["id"]
+    old_id = next(r["id"] for r in db.search(match=None) if r["source_id"] == "111")
     # Inserat verschwindet ...
     del fake.pages[URL_FW]
     fake.pages[SEARCH_URL] = SEARCH.replace('data-adid="111"', 'data-adid="999"')
@@ -263,7 +263,7 @@ def test_market_compare(env):
     med, n = stats[("kauf", "90443")]
     assert n == 3
     assert round(med) == round(219000 / 55)          # Median von 3982, 3317, 4363
-    fw = db.search()[0]
+    fw = next(r for r in db.search() if r["source_id"] == "111")
     assert fw["market"]["dev"] == 0 and fw["market"]["label"] == "PLZ 90443"
 
 
@@ -278,7 +278,7 @@ def test_area_api_map_and_export(tmp_path, monkeypatch):
     db = DB(cfg.db_path)
     pipeline.run_once(cfg, db, FakeNotifier())
     c = TestClient(create_app(cfg, db, sync_reprocess=True))
-    lid = db.search()[0]["id"]
+    lid = next(r["id"] for r in db.search(match=None) if r["source_id"] == "111")
     assert db.get(lid)["match_level"] == "voll"
     assert db.get(lid)["geo_precision"] == "plz" and db.get(lid)["plz"] == "90443"
 

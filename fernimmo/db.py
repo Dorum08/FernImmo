@@ -478,7 +478,7 @@ class DB:
                        "(SELECT MAX(ts) FROM changes WHERE listing_id=listings.id AND field<>'created') DESC",
         }.get(sort, "first_seen DESC")
         sql = "SELECT * FROM listings" + (" WHERE " + " AND ".join(where) if where else "")
-        sql += f" ORDER BY {order} LIMIT ?"
+        sql += f" ORDER BY {order}, id DESC LIMIT ?"   # id: stabile Reihenfolge bei Gleichstand
         params.append(limit)
         rows = [_row(r) for r in self._query(sql, tuple(params))]
         self._attach_social(rows, user)

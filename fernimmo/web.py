@@ -101,7 +101,22 @@ class Reprocessor:
 
 
 def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_reprocess: bool = False) -> FastAPI:
-    app = FastAPI(title="FernImmo", docs_url=None, redoc_url=None)
+    app = FastAPI(title="FernImmo", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.middleware("http")
+    async def same_origin_only(request: Request, call_next):
+        """Schutz gegen Cross-Site-Request-Forgery: Ändernde Anfragen (POST/PATCH/DELETE) nur von
+        FernImmo selbst. Der Browser schickt das Passwort sonst auch bei Formularen fremder Seiten mit."""
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            src = request.headers.get("origin") or request.headers.get("referer")
+            if src:
+                from urllib.parse import urlparse
+                allowed = {request.headers.get("host", ""), request.headers.get("x-forwarded-host", "")}
+                if cfg.public_url:
+                    allowed.add(urlparse(cfg.public_url).netloc)
+                if urlparse(src).netloc not in allowed:
+                    return Response("Anfrage von fremder Seite abgelehnt", status_code=403)
+        return await call_next(request)
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     security = HTTPBasic(auto_error=bool(cfg.web_users))
     tz = ZoneInfo(cfg.timezone)

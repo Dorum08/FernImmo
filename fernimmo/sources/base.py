@@ -50,6 +50,10 @@ def card_snippet(a, same_listing) -> str:
     return ""
 
 
+def is_http(url: str) -> bool:
+    return url.lower().startswith(("http://", "https://"))
+
+
 def guess_type(url: str) -> str | None:
     u = url.lower()
     if any(k in u for k in ("kaufen", "kauf", "distributiontypes=buy", "buy", "-kaufen")):
@@ -144,6 +148,8 @@ class Source:
             mm = re.search(self.link_pattern, href)
             if mm:
                 full = urljoin(page_url, href.split("#")[0])
+                if not is_http(full):
+                    continue   # z. B. javascript:-Links nie übernehmen
                 hits.setdefault(mm.group(1), SearchHit(mm.group(1), full, listing_type))
         return list(hits.values())
 

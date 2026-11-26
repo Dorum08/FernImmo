@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from ..fetch import NotFoundError
 from ..models import RawListing
-from .base import SearchHit, Source, clean_soup, meta, text_of
+from .base import SearchHit, Source, clean_soup, is_http, meta, text_of
 
 
 class Kleinanzeigen(Source):
@@ -33,6 +33,8 @@ class Kleinanzeigen(Source):
             if not href:
                 continue
             aid = art["data-adid"]
+            if not is_http(urljoin(self.base_url, href)):
+                continue
             hits.setdefault(aid, SearchHit(aid, urljoin(self.base_url, href), listing_type,
                                            snippet=art.get_text(" ", strip=True)[:800]))
         return list(hits.values()) or super().search_hits(html, page_url, listing_type)

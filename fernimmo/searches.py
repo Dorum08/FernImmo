@@ -10,6 +10,7 @@ Weboberfläche) angelegt; danach ist die Datenbank maßgeblich.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -113,10 +114,21 @@ def profile_for(name: str, c: dict[str, Any]) -> Profile:
 
 
 # --------------------------------------------------------------------------- Laden
+_ENSURE_LOCK = threading.Lock()
+
+
 def ensure_searches(cfg, db) -> None:
-    """Legt beim ersten Start Suchen aus config.yaml bzw. alten Einstellungen an."""
+    """Legt beim ersten Start Suchen aus config.yaml bzw. alten Einstellungen an.
+    Gesperrt, weil Suchlauf und Weboberfläche gleichzeitig starten können."""
     if db.searches():
         return
+    with _ENSURE_LOCK:
+        if db.searches():
+            return
+        _create_initial_searches(cfg, db)
+
+
+def _create_initial_searches(cfg, db) -> None:
     old_crit = db.get_setting("criteria") or {}
     old_plz = db.get_setting("search_plz")
     profiles = cfg.profiles or [Profile(name="Meine Suche")]
