@@ -321,3 +321,43 @@ def test_area_api_map_and_export(tmp_path, monkeypatch):
     ws = wb.active
     assert ws.cell(1, 1).value == "ID" and ws.max_row == 2
     assert ws.cell(2, 9).value == 219000 and ws.cell(2, 4).hyperlink is not None
+
+
+def test_radius_search_web(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from fernimmo.web import create_app
+    cfg = make_cfg(tmp_path)
+    P = pages()
+    # Wohnung 111 mit exakten Koordinaten (Gostenhof), 222 in der Südstadt
+    P[URL_FW] = P[URL_FW].replace("<head>", '<head><meta property="og:latitude" content="49.4495">'
+                                  '<meta property="og:longitude" content="11.0571">')
+    monkeypatch.setattr(pipeline, "make_fetcher", lambda *a, **k: FakeFetcher(P))
+    db = DB(cfg.db_path)
+    pipeline.run_once(cfg, db, FakeNotifier())
+    c = TestClient(create_app(cfg, db, sync_reprocess=True))
+    fw = next(r for r in db.search(match=None) if r["source_id"] == "111")
+
+    # Ort per PLZ suchen (offline aus den mitgelieferten PLZ-Daten)
+    g = c.get("/api/geocode", params={"q": "90403"}).json()
+    assert 49.44 < g["lat"] < 49.46 and "90403" in g["label"]
+
+    # 1 km um den Plärrer: Gostenhof-Wohnung (ca. 0,6 km) liegt drin
+    r = c.post("/api/areas", json={"kind": "search", "name": "Plärrer", "center": [49.4486, 11.0631], "radius_km": 1})
+    assert r.status_code == 200
+    area = db.areas("search")[0]
+    assert area["radius_km"] == 1 and area["center_lat"] == 49.4486
+    assert db.get(fw["id"])["match_level"] == "voll"
+    page = c.get("/?sort=distance").text
+    assert "km bis Plärrer" in page
+    # Kleinerer Radius: 0,3 km -> außerhalb
+    c.delete(f"/api/areas/{area['id']}")
+    c.post("/api/areas", json={"kind": "search", "center": [49.4486, 11.0631], "radius_km": 0.3})
+    assert db.get(fw["id"])["match_level"] == "none"
+    assert db.areas("search")[0]["name"] == "0,3 km Umkreis"
+    # Ungültige Eingaben
+    assert c.post("/api/areas", json={"kind": "search", "center": [0, 0], "radius_km": 1}).status_code == 400
+    assert c.post("/api/areas", json={"kind": "search", "center": [49.4, 11.0], "radius_km": 500}).status_code == 400
+    assert c.post("/api/areas", json={"kind": "search", "center": "x", "radius_km": 1}).status_code == 400
+    # Export enthält Entfernung
+    assert "Entfernung km" in c.get("/export.csv?match=").content.decode("utf-8-sig").splitlines()[0]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -93,6 +94,27 @@ def valid_geometry(geom: Any) -> bool:
                                       for p in poly[0]) for poly in polys)
     except (KeyError, TypeError, IndexError):
         return False
+
+
+# --------------------------------------------------------------------------- Umkreis
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Luftlinie in km."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * 6371.0088 * math.asin(math.sqrt(a))
+
+
+def circle_polygon(lat: float, lon: float, radius_km: float, n: int = 64) -> dict:
+    """Kreis als GeoJSON-Polygon (für Anzeige und Überschneidung mit PLZ-Gebieten)."""
+    ring = []
+    for i in range(n):
+        a = 2 * math.pi * i / n
+        dlat = radius_km / 111.32 * math.cos(a)
+        dlon = radius_km / (111.32 * math.cos(math.radians(lat))) * math.sin(a)
+        ring.append([round(lon + dlon, 6), round(lat + dlat, 6)])
+    ring.append(ring[0])
+    return {"type": "Polygon", "coordinates": [ring]}
 
 
 # --------------------------------------------------------------------------- PLZ-Gebiete
@@ -229,14 +251,22 @@ class Geocoder:
 class AreaFilter:
     """Suchgebiet aus der Weboberfläche: ausgewählte PLZ und/oder frei gezeichnete Flächen."""
 
-    def __init__(self, plz: Iterable[str] = (), polygons: Iterable[dict] = (), fw_zones: Iterable[dict] = ()):
+    def __init__(self, plz: Iterable[str] = (), polygons: Iterable[dict] = (), fw_zones: Iterable[dict] = (),
+                 circles: Iterable[tuple[float, float, float]] = ()):
         self.plz = set(plz)
-        self.polygons = list(polygons)
+        self.circles = list(circles)                      # (lat, lon, radius_km) – Umkreissuche
+        self.free = list(polygons)                        # frei gezeichnete Flächen
+        # Für Überschneidungen mit PLZ-Gebieten zählen Kreise als Polygon
+        self.polygons = self.free + [circle_polygon(*c) for c in self.circles]
         self.fw_zones = list(fw_zones)
 
     @property
     def active(self) -> bool:
         return bool(self.plz or self.polygons)
+
+    def _inside_exact(self, lat: float, lon: float) -> bool:
+        return any(point_in(lat, lon, g) for g in self.free) or \
+            any(haversine_km(lat, lon, c[0], c[1]) <= c[2] for c in self.circles)
 
     def check(self, data: dict) -> bool | None:
         """True = im Gebiet, False = außerhalb, None = unklar (Lage zu ungenau bekannt)."""
@@ -246,7 +276,7 @@ class AreaFilter:
         if not self.polygons:
             return False if plz or lat is not None else None
         if lat is not None and prec in ("portal", "adresse"):
-            return any(point_in(lat, lon, g) for g in self.polygons)
+            return self._inside_exact(lat, lon)
         # Nur die PLZ ist bekannt: überschneidet sich das PLZ-Gebiet mit einer gezeichneten Fläche?
         feat = plz_areas().get(plz or "")
         if feat:

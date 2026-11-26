@@ -100,3 +100,24 @@ def test_costs():
     assert c["bruttorendite_pct"] == round(50 * 12 * 12 / 200000 * 100, 2)
     assert costs(200000, 50, 0, ["provisionsfrei"], CALC_DEFAULTS)["makler_pct"] == 0
     assert costs(None, 50, 0, [], CALC_DEFAULTS) is None
+
+
+def test_haversine_and_circle():
+    from fernimmo.geo import circle_polygon, haversine_km
+    # Hauptmarkt -> Plärrer ca. 1,2 km
+    assert 1.0 < haversine_km(49.4521, 11.0767, 49.4486, 11.0631) < 1.3
+    circ = circle_polygon(49.45, 11.08, 2.0)
+    assert len(circ["coordinates"][0]) == 65 and valid_geometry(circ)
+    for lon, lat in circ["coordinates"][0][:-1]:
+        assert abs(haversine_km(49.45, 11.08, lat, lon) - 2.0) < 0.02
+
+
+def test_area_filter_circle():
+    area = AreaFilter(circles=[(49.4486, 11.0631, 1.5)])   # 1,5 km um den Plärrer
+    near = {"lat": 49.4521, "lon": 11.0767, "geo_precision": "adresse"}   # Hauptmarkt, ~1,2 km
+    far = {"lat": 49.4380, "lon": 11.0850, "geo_precision": "portal"}     # Südstadt, ~2 km
+    assert area.check(near) is True
+    assert area.check(far) is False
+    # Nur PLZ bekannt: 90443 (Gostenhof) schneidet den Kreis -> unklar; Erlangen -> außerhalb
+    assert area.check({"plz": "90443", "geo_precision": "plz"}) is None
+    assert area.check({"plz": "91052", "geo_precision": "plz"}) is False

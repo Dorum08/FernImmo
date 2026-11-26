@@ -38,6 +38,17 @@ const FI = {
   /** Gezeichnete Gebiete (Suchgebiet blau, Fernwärme rot gestrichelt) als Layer. */
   areaLayer(area, opts) {
     const fw = area.kind === "fw";
+    if (area.radius_km != null) {
+      // Umkreis: echter Kreis plus Mittelpunkt
+      const color = fw ? this.colors.fw : this.colors.search;
+      const g = L.featureGroup([
+        L.circle([area.center_lat, area.center_lon], Object.assign({radius: area.radius_km * 1000, color, weight: 2,
+          dashArray: fw ? "6 4" : null, fillOpacity: fw ? 0.08 : 0.1}, opts || {})),
+        L.circleMarker([area.center_lat, area.center_lon], {radius: 5, color: "#fff", weight: 2, fillColor: color,
+          fillOpacity: 1, interactive: false}),
+      ]);
+      return g;
+    }
     return L.geoJSON(area.geometry, Object.assign({
       style: {color: fw ? this.colors.fw : this.colors.search, weight: 2, dashArray: fw ? "6 4" : null,
               fillOpacity: fw ? 0.08 : 0.12},

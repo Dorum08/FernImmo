@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS geocache (
 """
 
 # Spalten, die nachträglich dazugekommen sind (Migration bestehender Datenbanken)
-MIGRATIONS = {"listings": {
+MIGRATIONS = {"areas": {"center_lat": "REAL", "center_lon": "REAL", "radius_km": "REAL"}, "listings": {
     "last_fetched": "TEXT", "lat": "REAL", "lon": "REAL", "geo_precision": "TEXT",
     "loose_fp": "TEXT", "relisted_of": "INTEGER",
 }}
@@ -555,9 +555,13 @@ class DB:
             out.append(d)
         return out
 
-    def add_area(self, kind: str, name: str, geometry: dict, user: str) -> int:
-        return self._exec("INSERT INTO areas(kind, name, geometry, created, created_by) VALUES (?,?,?,?,?)",
-                          (kind, name[:100], json.dumps(geometry), now(), user)).lastrowid
+    def add_area(self, kind: str, name: str, geometry: dict, user: str,
+                 center: tuple[float, float] | None = None, radius_km: float | None = None) -> int:
+        return self._exec(
+            """INSERT INTO areas(kind, name, geometry, created, created_by, center_lat, center_lon, radius_km)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (kind, name[:100], json.dumps(geometry), now(), user,
+             center[0] if center else None, center[1] if center else None, radius_km)).lastrowid
 
     def rename_area(self, aid: int, name: str) -> None:
         self._exec("UPDATE areas SET name=? WHERE id=?", (name[:100], aid))

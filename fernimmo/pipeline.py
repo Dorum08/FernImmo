@@ -33,7 +33,9 @@ def load_area(db: DB) -> AreaFilter:
     """Suchgebiet und Fernwärme-Gebiete aus der Weboberfläche."""
     return AreaFilter(
         plz=db.get_setting("search_plz", []),
-        polygons=[a["geometry"] for a in db.areas("search")],
+        polygons=[a["geometry"] for a in db.areas("search") if a.get("radius_km") is None],
+        circles=[(a["center_lat"], a["center_lon"], a["radius_km"]) for a in db.areas("search")
+                 if a.get("radius_km") is not None],
         fw_zones=[a["geometry"] for a in db.areas("fw")],
     )
 

@@ -27,7 +27,7 @@
   <label>Status<select name="status"><option value="">alle außer ausgeblendet</option>
     {% for s in statuses %}<option {% if f.status==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select></label>
   <label>Sortierung<select name="sort">
-    {% for v,t in [("first_seen","Neueste"),("changed","Zuletzt geändert"),("online","Am längsten online"),("likes","Meiste Likes"),("price","Preis ↑"),("ppsqm","€/m² ↑"),("area","Fläche ↓")] %}
+    {% for v,t in [("first_seen","Neueste"),("changed","Zuletzt geändert"),("online","Am längsten online"),("distance","Entfernung ↑"),("likes","Meiste Likes"),("price","Preis ↑"),("ppsqm","€/m² ↑"),("area","Fläche ↓")] %}
     <option value="{{v}}" {% if f.sort==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
   <label>Suche / ID<input name="q" value="{{ f.q }}" placeholder="z.B. Gostenhof oder #12"></label>
   <label><span><input type="checkbox" name="liked" value="1" {% if f.liked %}checked{% endif %}> nur gelikte</span>
@@ -66,6 +66,7 @@
         {% if d.flags %}<span class="fw-unbekannt">⚠ {{ d.flags|join(", ") }}</span>{% endif %}
       </div>
       <div class="kpis">
+        {% if l.distance %}<span title="Luftlinie zum Mittelpunkt von „{{ l.distance.to }}“{{ ' – Lage nur PLZ-genau' if l.distance.approx }}">📏 {{ "~" if l.distance.approx }}{{ ("%.1f"|format(l.distance.km)).replace(".", ",") }} km bis {{ l.distance.to }}</span>{% endif %}
         <span title="inkl. früherer Inserate derselben Wohnung">⏱ {{ l.days_online }} Tag{{ "" if l.days_online == 1 else "e" }} am Markt</span>
         {% if l.price_drops %}<span class="mkt-good">📉 {{ l.price_drops }}× gesenkt{% if l.price_delta_pct %} ({{ "%+.1f"|format(l.price_delta_pct) }} %){% endif %}</span>
         {% elif l.price_delta_pct %}<span>Preis {{ "%+.1f"|format(l.price_delta_pct) }} %</span>{% endif %}

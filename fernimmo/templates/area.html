@@ -16,8 +16,25 @@ als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code
   <div>
     <div class="toolbar">
       <button id="draw-search" class="primary">✏️ Suchgebiet zeichnen</button>
+      <button id="draw-circle">◎ Umkreis</button>
       <button id="draw-fw">🔥 Fernwärme-Gebiet zeichnen</button>
       <span id="hint" class="muted small">PLZ-Gebiete anklicken zum Auswählen.</span>
+    </div>
+    <div id="circle-panel" class="card circle-panel" hidden>
+      <form id="circle-search" class="circle-row">
+        <label style="flex:2">Ort, Adresse oder PLZ
+          <input id="circle-q" placeholder="z.B. Plärrer, Fürther Str. 100 oder 90429" autocomplete="off"></label>
+        <button>Suchen</button>
+        <span class="muted small" style="align-self:center">… oder in die Karte klicken</span>
+      </form>
+      <div class="circle-row">
+        <label style="flex:2">Radius: <b id="circle-r-label">2 km</b>
+          <input type="range" id="circle-r" min="0.5" max="20" step="0.5" value="2"></label>
+        <label style="flex:1">Name<input id="circle-name" placeholder="z.B. Arbeit"></label>
+        <button id="circle-save" class="primary" disabled>Umkreis speichern</button>
+        <button id="circle-cancel" type="button">Abbrechen</button>
+      </div>
+      <div id="circle-msg" class="small muted"></div>
     </div>
     <div id="map" class="map-big"></div>
     <p class="muted small">PLZ-Grenzen: © OpenStreetMap-Mitwirkende (ODbL), Stand Februar 2026.</p>
@@ -67,7 +84,7 @@ als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code
       known.add(p);
       plzLayers[p] = layer;
       layer.bindTooltip(p, {sticky: true});
-      layer.on("click", () => { if (!drawing) togglePlz(p); });
+      layer.on("click", () => { if (!drawing && document.getElementById("circle-panel").hidden) togglePlz(p); });
     },
   }).addTo(map);
   map.fitBounds(plzGroup.getBounds(), {padding: [10, 10]});
@@ -107,12 +124,12 @@ als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code
     areaLayers[a.id] = layer;
   }
   function renderList(areas) {
-    $("area-list").innerHTML = areas.length ? "" : '<li class="muted small">Noch keine – oben „zeichnen“ wählen.</li>';
+    $("area-list").innerHTML = areas.length ? "" : '<li class="muted small">Noch keine – oben „zeichnen“ oder „Umkreis“ wählen.</li>';
     for (const a of areas) {
       const li = document.createElement("li");
       li.innerHTML = `<span class="dot" style="background:${a.kind === "fw" ? FI.colors.fw : FI.colors.search}"></span>
         <span class="area-name">${FI.esc(a.name)}</span>
-        <span class="muted small">${a.kind === "fw" ? "Fernwärme" : "Suchgebiet"} · ${FI.esc(a.created_by || "")}</span>
+        <span class="muted small">${a.kind === "fw" ? "Fernwärme" : a.radius_km != null ? "Umkreis " + String(a.radius_km).replace(".", ",") + " km" : "Suchgebiet"} · ${FI.esc(a.created_by || "")}</span>
         <button class="link" data-act="zoom">zeigen</button>
         <button class="link" data-act="rename">umbenennen</button>
         <button class="link" data-act="del">löschen</button>`;
@@ -156,6 +173,71 @@ als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code
     document.querySelectorAll(".toolbar button").forEach(b => b.classList.remove("active"));
   }
   $("draw-search").onclick = () => startDraw("search");
+
+  // --- Umkreissuche ----------------------------------------------------------
+  let circleCenter = null, circlePreview = null, circleLabel = "";
+  const panel = $("circle-panel");
+  const radius = () => parseFloat($("circle-r").value);
+  const kmText = v => String(v).replace(".", ",") + " km";
+  function drawPreview() {
+    $("circle-r-label").textContent = kmText(radius());
+    if (!circleCenter) return;
+    if (circlePreview) map.removeLayer(circlePreview);
+    circlePreview = FI.areaLayer({kind: "search", radius_km: radius(), center_lat: circleCenter[0],
+                                  center_lon: circleCenter[1]}, {dashArray: "4 4", interactive: false}).addTo(map);
+    $("circle-save").disabled = false;
+  }
+  function setCenter(lat, lon, label) {
+    circleCenter = [lat, lon];
+    circleLabel = label || "";
+    if (!$("circle-name").value && label) $("circle-name").value = label.replace(/ \(Mittelpunkt\)$/, "");
+    $("circle-msg").textContent = "Mittelpunkt: " + (label || lat.toFixed(5) + ", " + lon.toFixed(5));
+    drawPreview();
+    map.fitBounds(circlePreview.getBounds(), {padding: [20, 20]});
+  }
+  function closeCircle() {
+    panel.hidden = true;
+    $("draw-circle").classList.remove("active");
+    if (circlePreview) map.removeLayer(circlePreview);
+    circlePreview = circleCenter = null;
+    $("circle-save").disabled = true;
+    $("circle-name").value = ""; $("circle-q").value = ""; $("circle-msg").textContent = "";
+  }
+  $("draw-circle").onclick = () => {
+    if (!panel.hidden) return closeCircle();
+    panel.hidden = false;
+    $("draw-circle").classList.add("active");
+    $("circle-q").focus();
+  };
+  $("circle-cancel").onclick = closeCircle;
+  $("circle-r").addEventListener("input", drawPreview);
+  $("circle-search").onsubmit = async e => {
+    e.preventDefault();
+    const q = $("circle-q").value.trim();
+    if (!q) return;
+    $("circle-msg").textContent = "Suche …";
+    try {
+      const r = await FI.json("/api/geocode?q=" + encodeURIComponent(q));
+      setCenter(r.lat, r.lon, r.label);
+    } catch (err) {
+      $("circle-msg").textContent = "Ort nicht gefunden – bitte genauer angeben oder in die Karte klicken.";
+    }
+  };
+  // Klick in die Karte setzt den Mittelpunkt, solange das Umkreis-Feld offen ist
+  map.on("click", e => {
+    if (panel.hidden || drawing) return;
+    setCenter(e.latlng.lat, e.latlng.lng, "");
+  });
+  $("circle-save").onclick = async () => {
+    if (!circleCenter) return;
+    const name = $("circle-name").value.trim() || `${kmText(radius())} um ${circleLabel || "Punkt"}`;
+    const payload = {kind: "search", name, center: circleCenter, radius_km: radius()};
+    const r = await FI.json("/api/areas", {method: "POST", body: JSON.stringify(payload)});
+    const a = {id: r.id, kind: "search", name, radius_km: radius(), center_lat: circleCenter[0],
+               center_lon: circleCenter[1], created_by: {{ user|tojson }}};
+    closeCircle();
+    areas.push(a); addAreaLayer(a); renderList(areas); busy();
+  };
   $("draw-fw").onclick = () => startDraw("fw");
 
   // --- Hinweis während der Neubewertung ------------------------------------

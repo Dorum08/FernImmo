@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 from .calc import costs
 from .config import Config
 from .db import DB
-from .geo import plz_areas, valid_geometry
+from .geo import Geocoder, circle_polygon, haversine_km, plz_areas, plz_center, valid_geometry
 from .notify import HEATING_NAMES, fmt_num
 from .pipeline import Scheduler, reprocess
 
@@ -121,6 +121,19 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
                 return creds.username
         raise HTTPException(401, "Nicht angemeldet", headers={"WWW-Authenticate": "Basic"})
 
+    def with_distance(rows: list[dict], sort: str) -> list[dict]:
+        """Entfernung (Luftlinie) zum nächsten Umkreis-Mittelpunkt; optional danach sortieren."""
+        centers = [a for a in db.areas("search") if a.get("radius_km") is not None]
+        for r in rows:
+            r["distance"] = None
+            if centers and r.get("lat") is not None:
+                best = min(centers, key=lambda a: haversine_km(r["lat"], r["lon"], a["center_lat"], a["center_lon"]))
+                r["distance"] = {"km": round(haversine_km(r["lat"], r["lon"], best["center_lat"], best["center_lon"]), 1),
+                                 "to": best["name"], "approx": r.get("geo_precision") == "plz"}
+        if sort == "distance":
+            rows.sort(key=lambda r: (r["distance"] is None, (r["distance"] or {}).get("km", 0)))
+        return rows
+
     def here_of(request: Request) -> str:
         return request.url.path + (f"?{request.url.query}" if request.url.query else "")
 
@@ -131,11 +144,12 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
     # ------------------------------------------------------------------ Seiten
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request, f: Filters = Depends(), user: str = Depends(auth)):
-        rows = db.search(**f.search_args(), user=user)
+        rows = with_distance(db.search(**f.search_args(), user=user), f.sort)
         return templates.TemplateResponse(request, "index.html", {
             "rows": rows, "stats": db.stats(), "sources": list(cfg.sources), "statuses": STATUSES,
             "f": asdict(f), "runs": db.recent_runs(len(cfg.sources) or 1), "user": user,
             "here": here_of(request), "query": request.url.query, "area": area_summary(),
+            "has_circles": any(a.get("radius_km") for a in db.areas("search")),
             "reprocessing": reproc.busy.is_set(),
         })
 
@@ -221,6 +235,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         ("Energieträger", lambda r: ", ".join(HEATING_NAMES.get(h, h) for h in r["data"].get("heating_sources", []))),
         ("Fernwärme", lambda r: r["fernwaerme"]), ("Energieklasse", lambda r: r["data"].get("energy_class")),
         ("Etage", lambda r: r["data"].get("floor")),
+        ("Entfernung km", lambda r: (r.get("distance") or {}).get("km")),
         ("Monatl. Belastung €", lambda r: (calc_for(r) or {}).get("belastung")),
         ("Kaufnebenkosten €", lambda r: (calc_for(r) or {}).get("nebenkosten")),
         ("Treffer", lambda r: r["match_level"]), ("Status", lambda r: r["status"]),
@@ -235,7 +250,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
 
     @app.get("/export.csv")
     def export_csv(f: Filters = Depends(), user: str = Depends(auth)):
-        rows = db.search(**f.search_args(), user=user, limit=5000)
+        rows = with_distance(db.search(**f.search_args(), user=user, limit=5000), f.sort)
         buf = io.StringIO()
         w = csv.writer(buf, delimiter=";")
         w.writerow([c for c, _ in EXPORT_COLS])
@@ -251,7 +266,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         from openpyxl import Workbook
         from openpyxl.styles import Font
 
-        rows = db.search(**f.search_args(), user=user, limit=5000)
+        rows = with_distance(db.search(**f.search_args(), user=user, limit=5000), f.sort)
         wb = Workbook()
         ws = wb.active
         ws.title = "Inserate"
@@ -304,10 +319,23 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
     @app.post("/api/areas")
     def api_add_area(payload: dict = Body(...), user: str = Depends(auth)):
         kind, geom = payload.get("kind"), payload.get("geometry")
-        if kind not in ("search", "fw") or not valid_geometry(geom):
+        center, radius = payload.get("center"), payload.get("radius_km")
+        if kind not in ("search", "fw"):
             raise HTTPException(400, "Ungültiges Gebiet")
-        aid = db.add_area(kind, str(payload.get("name") or ("Suchgebiet" if kind == "search" else "Fernwärme")),
-                          geom, user)
+        if center is not None or radius is not None:
+            # Umkreissuche: Mittelpunkt + Radius; das Polygon dient nur der Anzeige/PLZ-Überschneidung
+            try:
+                lat, lon, radius = float(center[0]), float(center[1]), float(radius)
+            except (TypeError, ValueError, IndexError):
+                raise HTTPException(400, "Ungültiger Umkreis")
+            if not (47 <= lat <= 55.5 and 5 <= lon <= 16 and 0.1 <= radius <= 100):
+                raise HTTPException(400, "Ungültiger Umkreis")
+            center, geom = (round(lat, 6), round(lon, 6)), circle_polygon(lat, lon, radius)
+        elif not valid_geometry(geom):
+            raise HTTPException(400, "Ungültiges Gebiet")
+        default = f"{radius:g} km Umkreis".replace(".", ",") if radius else ("Suchgebiet" if kind == "search" else "Fernwärme")
+        aid = db.add_area(kind, str(payload.get("name") or default), geom, user,
+                          center=center, radius_km=radius)
         _changed()
         return {"id": aid}
 
@@ -329,6 +357,22 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         db.set_setting("search_plz", plz)
         _changed()
         return {"plz": plz}
+
+    geocoder = Geocoder(db, cfg.geocoding)
+
+    @app.get("/api/geocode")
+    def api_geocode(q: str, user: str = Depends(auth)):
+        """Ort für die Umkreissuche: PLZ (offline) oder Adresse/Ort über OpenStreetMap."""
+        q = q.strip()[:200]
+        if q.isdigit() and len(q) == 5 and plz_center(q):
+            lat, lon = plz_center(q)
+            return {"lat": lat, "lon": lon, "label": f"PLZ {q} (Mittelpunkt)"}
+        city = cfg.geocoding.get("city_hint", "Nürnberg")
+        point = geocoder.geocode(q if "," in q or city.lower() in q.lower() else f"{q}, {city}") \
+            or geocoder.geocode(q)
+        if not point:
+            raise HTTPException(404, "Ort nicht gefunden")
+        return {"lat": point[0], "lon": point[1], "label": q}
 
     @app.get("/health")
     def health():
