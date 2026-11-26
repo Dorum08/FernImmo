@@ -33,7 +33,8 @@ class Kleinanzeigen(Source):
             if not href:
                 continue
             aid = art["data-adid"]
-            hits.setdefault(aid, SearchHit(aid, urljoin(self.base_url, href), listing_type))
+            hits.setdefault(aid, SearchHit(aid, urljoin(self.base_url, href), listing_type,
+                                           snippet=art.get_text(" ", strip=True)[:800]))
         return list(hits.values()) or super().search_hits(html, page_url, listing_type)
 
     def parse_detail(self, html: str, hit: SearchHit) -> RawListing:

@@ -1,8 +1,8 @@
 from fernimmo.calc import costs
 from fernimmo.config import CALC_DEFAULTS
 from fernimmo.extract import extract
-from fernimmo.geo import (AreaFilter, coords_from_html, has_street, overlaps, plz_areas, plz_center,
-                          plz_for_point, point_in, valid_geometry)
+from fernimmo.geo import (AreaFilter, coords_from_html, has_street, overlaps, plz_center, plz_exists,
+                          plz_feature, plz_for_point, plz_index, plz_state, point_in, valid_geometry)
 from fernimmo.matcher import Profile, match
 
 SQUARE = {"type": "Polygon", "coordinates": [[[11.0, 49.4], [11.2, 49.4], [11.2, 49.5], [11.0, 49.5], [11.0, 49.4]]]}
@@ -30,14 +30,26 @@ def test_overlaps():
     assert overlaps(thin_h, thin_v)
 
 
-def test_plz_data_nuernberg():
-    areas = plz_areas()
-    assert len(areas) > 50 and "90443" in areas and "90402" in areas
-    lat, lon = 49.4521, 11.0767  # Hauptmarkt
-    assert plz_for_point(lat, lon) == "90403"
+def test_plz_data_germany():
+    idx = plz_index()["plz"]
+    assert len(idx) > 8000
+    assert plz_for_point(49.4521, 11.0767) == "90403"      # Nürnberg, Hauptmarkt
+    assert plz_for_point(52.5163, 13.3777) == "10117"      # Berlin, Brandenburger Tor
+    assert plz_for_point(53.5413, 9.9842) == "20457"       # Hamburg, Elbphilharmonie
+    assert plz_for_point(48.1374, 11.5755) == "80331"      # München, Marienplatz
     c = plz_center("90443")
     assert c and 49.3 < c[0] < 49.6 and 10.9 < c[1] < 11.2
-    assert plz_center("12345") is None
+    assert plz_feature("90443")["geometry"]["type"] in ("Polygon", "MultiPolygon")
+    assert plz_center("00000") is None and not plz_exists("00000")
+    assert [plz_state(p) for p in ("90403", "10115", "20095", "01067", "50667", "27568", "28195", "66111")] == \
+        ["BY", "BE", "HH", "SN", "NW", "HB", "HB", "SL"]
+
+
+def test_area_plz_prefix():
+    area = AreaFilter(plz=["904", "10115"])
+    assert area.check({"plz": "90443"}) is True
+    assert area.check({"plz": "10115"}) is True
+    assert area.check({"plz": "10117"}) is False
 
 
 def test_coords_from_html():
@@ -92,13 +104,19 @@ def test_fw_zone():
 
 
 def test_costs():
-    c = costs(200000, 50, 250, [], CALC_DEFAULTS)
+    c = costs(200000, 50, 250, [], CALC_DEFAULTS, state="BY")
     assert c["nebenkosten"] == round(200000 * (3.5 + 2.0 + 3.57) / 100)
+    assert c["grunderwerbsteuer_von"] == "Bayern"
+    assert costs(200000, 50, 0, [], CALC_DEFAULTS, state="NW")["grunderwerbsteuer_pct"] == 6.5
+    assert costs(200000, 50, 0, [], CALC_DEFAULTS, state=None)["grunderwerbsteuer_von"] == "Bundesland unbekannt"
+    assert costs(200000, 50, 0, [], {**CALC_DEFAULTS, "grunderwerbsteuer_pct": 4})["grunderwerbsteuer_pct"] == 4
+    assert costs(200000, 50, 0, [], {**CALC_DEFAULTS, "grunderwerbsteuer_laender": {"BY": 4.5}},
+                 state="BY")["grunderwerbsteuer_pct"] == 4.5
     assert c["darlehen"] == c["gesamt"] - 60000
     assert c["rate"] == round(c["darlehen"] * 5.6 / 100 / 12)
     assert c["belastung"] == c["rate"] + 250
     assert c["bruttorendite_pct"] == round(50 * 12 * 12 / 200000 * 100, 2)
-    assert costs(200000, 50, 0, ["provisionsfrei"], CALC_DEFAULTS)["makler_pct"] == 0
+    assert costs(200000, 50, 0, ["provisionsfrei"], CALC_DEFAULTS, state="BY")["makler_pct"] == 0
     assert costs(None, 50, 0, [], CALC_DEFAULTS) is None
 
 

@@ -1,6 +1,7 @@
 """Ein Suchlauf: Quellen abfragen, neue Inserate auswerten, speichern, melden."""
 from __future__ import annotations
 
+import copy
 import logging
 import random
 import threading
@@ -10,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from .config import Config
 from .db import DB, now
 from .extract import extract
-from .geo import AreaFilter, Geocoder, plz_for_point
+from .geo import AreaFilter, Geocoder, plz_for_point, plz_state
 from .fetch import BlockedError, NotFoundError, make_fetcher
 from .matcher import best_match
 from .models import Listing, RawListing
@@ -22,7 +23,8 @@ def _calc(row: dict, cfg: Config) -> dict | None:
     if row.get("listing_type") != "kauf":
         return None
     d = row["data"]
-    return costs(row.get("price"), d.get("area"), d.get("hausgeld"), d.get("flags"), cfg.calculator)
+    return costs(row.get("price"), d.get("area"), d.get("hausgeld"), d.get("flags"), cfg.calculator,
+                 state=plz_state(row.get("plz")))
 from .sources import build_source
 from .sources.base import SearchHit
 
@@ -40,8 +42,36 @@ def load_area(db: DB) -> AreaFilter:
     )
 
 
+CRITERIA_KEYS = ("rooms_min", "rooms_max", "price_max", "area_min")
+
+
+def effective_profiles(cfg: Config, db: DB) -> list:
+    """Profile aus config.yaml, überschrieben mit den Suchkriterien aus der Weboberfläche."""
+    crit = db.get_setting("criteria")
+    if not crit:
+        return cfg.profiles
+    out = []
+    for p in cfg.profiles:
+        q = copy.copy(p)
+        for k in CRITERIA_KEYS:
+            if k in crit:
+                setattr(q, k, crit[k])
+        out.append(q)
+    return out
+
+
+def prefiltered(hit: SearchHit, cfg: Config, area: AreaFilter, profiles: list) -> bool:
+    """True, wenn schon der Kurztext aus der Ergebnisliste klar gegen alle Profile spricht
+    (z. B. falsche PLZ bei bundesweiter Suche, 4 Zimmer bei Suche nach 1–2). Spart Abrufe."""
+    if not hit.snippet:
+        return False
+    data = extract(hit.snippet)
+    level, _, _ = best_match(profiles, hit.listing_type, data, hit.snippet, area)
+    return level == "none"
+
+
 def evaluate(raw: RawListing, cfg: Config, geocoder: Geocoder | None = None,
-             area: AreaFilter | None = None) -> tuple[Listing, list[str]]:
+             area: AreaFilter | None = None, profiles: list | None = None) -> tuple[Listing, list[str]]:
     data = extract(raw.text, raw.title, raw.structured)
     # Generischer "Preis" (z.B. Kleinanzeigen) = Kaltmiete bzw. Kaufpreis
     if data.get("price_generic"):
@@ -62,7 +92,8 @@ def evaluate(raw: RawListing, cfg: Config, geocoder: Geocoder | None = None,
         data["plz"] = plz_for_point(lat, lon)
     data["fw_zone"] = bool(area and area.in_fw_zone(data))
     full_text = f"{raw.title}\n{raw.text}"
-    level, names, reasons = best_match(cfg.profiles, raw.listing_type, data, full_text, area)
+    level, names, reasons = best_match(profiles if profiles is not None else cfg.profiles,
+                                       raw.listing_type, data, full_text, area)
     listing = Listing(
         id=None, source=raw.source, source_id=raw.source_id, url=raw.url, title=raw.title,
         address=raw.address, listing_type=raw.listing_type, data=data, match_level=level,
@@ -77,6 +108,7 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
     fetcher = make_fetcher(scfg.get("fetcher", cfg.fetcher), cfg.delay, cfg.user_agent, cfg.proxy)
     geocoder = Geocoder(db, cfg.geocoding)
     area = load_area(db)
+    profiles = effective_profiles(cfg, db)
     try:
         src = build_source(name, scfg, fetcher)
         known = db.known_ids(src.name)
@@ -84,7 +116,10 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
         hits = src.search()
         stats["found"] = len(hits)
         db.touch(src.name, [h.source_id for h in hits if h.source_id in known])
-        todo = [h for h in hits if h.source_id not in known][: src.max_details]
+        new_hits = [h for h in hits if h.source_id not in known]
+        todo = [h for h in new_hits if not prefiltered(h, cfg, area, profiles)]
+        stats["prefiltered"] = len(new_hits) - len(todo)
+        todo = todo[: src.max_details]
         # Bekannte Treffer und gelikte Inserate regelmäßig neu laden, damit
         # Änderungen (Preis, Beschreibung, offline …) im Verlauf landen.
         due = db.due_for_refresh(src.name, float(scfg.get("refresh_hours", 6)), int(scfg.get("refresh_per_run", 15)))
@@ -104,7 +139,7 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
             except Exception as e:  # noqa: BLE001
                 log.warning("[%s] Detailseite %s fehlgeschlagen: %s", name, hit.url, e)
                 continue
-            listing, reasons = evaluate(raw, cfg, geocoder, area)
+            listing, reasons = evaluate(raw, cfg, geocoder, area, profiles)
             lid, is_new, changes = db.upsert(listing, raw.structured, reasons)
             row = db.get(lid)
             price_drop = next((c for c in changes if c["field"] in ("purchase_price", "rent_cold")
@@ -160,6 +195,7 @@ def reprocess(cfg: Config, db: DB) -> int:
     Suchgebiet). Ohne Netzwerk: Lage kommt aus der Datenbank bzw. dem Geocoding-Cache."""
     area = load_area(db)
     geocoder = Geocoder(db, {**cfg.geocoding, "enabled": False})
+    profiles = effective_profiles(cfg, db)
     n = 0
     for row in db.all_for_reprocess():
         raw = RawListing(
@@ -168,7 +204,7 @@ def reprocess(cfg: Config, db: DB) -> int:
             listing_type=row["listing_type"], image_url=row["image_url"],
             lat=row.get("lat"), lon=row.get("lon"), geo_precision=row.get("geo_precision"),
         )
-        listing, reasons = evaluate(raw, cfg, geocoder, area)
+        listing, reasons = evaluate(raw, cfg, geocoder, area, profiles)
         db.upsert(listing, raw.structured, reasons, track_changes=False)
         n += 1
     return n

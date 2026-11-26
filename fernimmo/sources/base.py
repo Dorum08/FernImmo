@@ -32,6 +32,22 @@ class SearchHit:
     source_id: str
     url: str
     listing_type: str | None
+    snippet: str = ""      # Kurztext aus der Ergebnisliste (für den Vorfilter)
+
+
+def card_snippet(a, same_listing) -> str:
+    """Text der Ergebnis-Kachel um einen Link – nur wenn die Kachel genau ein Inserat enthält."""
+    node = a
+    for _ in range(6):
+        node = node.parent
+        if node is None or node.name in ("body", "main", "html"):
+            return ""
+        links = [x.get("href", "") for x in node.find_all("a", href=True)]
+        if any(not same_listing(h) for h in links if h and not h.startswith(("#", "javascript", "mailto", "tel"))):
+            return ""   # Kachel enthält schon andere Inserate -> zu weit nach oben gegangen
+        if node.name in ("article", "li") or len(node.get_text(" ", strip=True)) > 80:
+            return node.get_text(" ", strip=True)[:800]
+    return ""
 
 
 def guess_type(url: str) -> str | None:

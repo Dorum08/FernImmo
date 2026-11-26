@@ -13,10 +13,15 @@
   <label>Fernwärme<select name="fernwaerme">
     {% for v,t in [("","egal"),("ja","ja"),("unbekannt","unbekannt"),("eher_nein","eher nein"),("nein","nein")] %}
     <option value="{{v}}" {% if f.fernwaerme==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
+  <label>Zimmer von<select name="rooms_min"><option value="">egal</option>
+    {% for v in [1,1.5,2,2.5,3,3.5,4,4.5,5,6] %}<option value="{{ v }}" {% if f.rooms_min and f.rooms_min|float == v %}selected{% endif %}>{{ ("%g"|format(v)).replace(".", ",") }}</option>{% endfor %}</select></label>
+  <label>Zimmer bis<select name="rooms_max"><option value="">egal</option>
+    {% for v in [1,1.5,2,2.5,3,3.5,4,4.5,5,6] %}<option value="{{ v }}" {% if f.rooms_max and f.rooms_max|float == v %}selected{% endif %}>{{ ("%g"|format(v)).replace(".", ",") }}</option>{% endfor %}</select></label>
+  <label>Preis bis €<input name="price_max" type="number" step="5000" min="0" value="{{ f.price_max }}" placeholder="egal" style="width:110px"></label>
   <label><span><input type="checkbox" name="liked" value="1" {% if f.liked %}checked{% endif %}> nur gelikte</span>
          <span><input type="checkbox" name="inactive" value="1" {% if f.inactive %}checked{% endif %}> auch offline</span></label>
   <button>Filtern</button>
-  <a href="/gebiet" style="align-self:center">Suchgebiet bearbeiten →</a>
+  <a href="/gebiet" style="align-self:center">Suche bearbeiten →</a>
 </form>
 <div class="legend small">
   <span><i class="dot" style="background:#15803d"></i> Volltreffer</span>
@@ -31,14 +36,13 @@
 
 <script>
 (async () => {
-  const map = FI.map("map", {{ center|tojson }}, 12);
+  const map = FI.map("map", {{ center|tojson }}, {{ zoom }});
   const [data, areaState, plz] = await Promise.all([
-    FI.json("/api/map?" + {{ query|tojson }}), FI.json("/api/areas"), FI.plz()]);
+    FI.json("/api/map?" + {{ query|tojson }}), FI.json("/api/areas"), FI.selectedFeatures([])]);
 
   // Suchgebiet: ausgewählte PLZ + gezeichnete Flächen
-  const sel = new Set(areaState.plz);
-  L.geoJSON(plz, {filter: f => sel.has(f.properties.plz),
-    style: {color: FI.colors.search, weight: 1, fillOpacity: 0.07}}).addTo(map);
+  L.geoJSON({type: "FeatureCollection", features: await FI.selectedFeatures(areaState.plz)},
+    {style: {color: FI.colors.search, weight: 1, fillOpacity: 0.07}, interactive: false}).addTo(map);
   const bounds = [];
   areaState.areas.forEach(a => {
     const layer = FI.areaLayer(a, {interactive: false}).addTo(map).bringToBack();

@@ -10,7 +10,7 @@
 </div>
 {% if not area.plz and not area.polygons %}
 <p class="card small">📍 Noch kein Suchgebiet festgelegt – es gilt die PLZ-Einstellung aus der config.yaml.
-  <a href="/gebiet">Suchgebiet auf der Karte festlegen →</a></p>
+  <a href="/gebiet">Suchgebiet und Kriterien festlegen →</a></p>
 {% endif %}
 {% if reprocessing %}<p class="card small">⏳ Inserate werden gerade neu bewertet – Seite gleich neu laden.</p>{% endif %}
 {% for r in runs %}{% if r.error %}<p class="card fw-nein">⚠️ Letzter Lauf {{ r.source }}: {{ r.error }}</p>{% endif %}{% endfor %}
@@ -22,6 +22,11 @@
   <label>Fernwärme<select name="fernwaerme">
     {% for v,t in [("","egal"),("ja","ja"),("unbekannt","unbekannt"),("eher_nein","eher nein"),("nein","nein")] %}
     <option value="{{v}}" {% if f.fernwaerme==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
+  <label>Zimmer von<select name="rooms_min"><option value="">egal</option>
+    {% for v in [1,1.5,2,2.5,3,3.5,4,4.5,5,6] %}<option value="{{ v }}" {% if f.rooms_min and f.rooms_min|float == v %}selected{% endif %}>{{ ("%g"|format(v)).replace(".", ",") }}</option>{% endfor %}</select></label>
+  <label>Zimmer bis<select name="rooms_max"><option value="">egal</option>
+    {% for v in [1,1.5,2,2.5,3,3.5,4,4.5,5,6] %}<option value="{{ v }}" {% if f.rooms_max and f.rooms_max|float == v %}selected{% endif %}>{{ ("%g"|format(v)).replace(".", ",") }}</option>{% endfor %}</select></label>
+  <label>Preis bis €<input name="price_max" type="number" step="5000" min="0" value="{{ f.price_max }}" placeholder="egal" style="width:110px"></label>
   <label>Quelle<select name="source"><option value="">alle</option>
     {% for s in sources %}<option {% if f.source==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select></label>
   <label>Status<select name="status"><option value="">alle außer ausgeblendet</option>

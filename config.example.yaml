@@ -50,14 +50,42 @@ sources:
     max_pages: 2
     max_details_per_run: 20
 
-  # Beliebige weitere Seite (z.B. Wohnungsbaugesellschaft) über Link-Muster:
-  # wbg:
+  # --- Weitere Portale (lernfähiger Adapter) --------------------------------
+  # Für diese Portale gibt es keinen eigenen Code: FernImmo erkennt die Inserats-
+  # Links auf der Ergebnisseite selbst und liest die Detailseiten allgemein aus.
+  # Jeweils die Suche im Browser einstellen (Ort/Region, Wohnung kaufen, gern
+  # „neueste zuerst“) und die URL unter urls eintragen. Ohne URL ist das Portal aus.
+  # Nach dem ersten Lauf mit `python -m fernimmo check <Inserat-URL>` prüfen,
+  # ob Zimmer, Fläche, Preis und Heizung erkannt werden.
+  ohne-makler:
+    urls: []        # z.B. Suchergebnis-URL von ohne-makler.de
+    type_default: kauf
+  immobilo:
+    urls: []        # Meta-Suche: Inserate auf Immowelt/Kleinanzeigen werden mit deren Adapter gelesen
+    type_default: kauf
+  immobilien.de:
+    urls: []
+    type_default: kauf
+  meinestadt:
+    urls: []        # Immobilienteil von meinestadt.de (meist Inserate von Immowelt)
+    type_default: kauf
+  ivd24:
+    urls: []        # ivd24immobilien.de
+    type_default: kauf
+  regionalimmobilien24:
+    urls: []
+    type_default: kauf
+  1a-immobilienmarkt:
+    urls: []
+    type_default: kauf
+
+  # Beliebige weitere Seite (z.B. Wohnungsbaugesellschaft, Makler-Website):
+  # meine-seite:
   #   type: generic
-  #   enabled: true
   #   urls: [https://www.example.de/kaufangebote]
-  #   link_pattern: '/immobilie/(\d+)'       # Regex, Gruppe 1 = eindeutige ID
-  #   content_selector: 'main'               # optional: CSS-Selektor für den Inseratstext
-  #   pagination: '{url}?page={page}'        # optional
+  #   link_pattern: '/immobilie/(\d+)'   # optional – ohne wird das Muster automatisch erkannt
+  #   content_selector: 'main'           # optional: CSS-Selektor für den Inseratstext
+  #   pagination: '{url}?page={page}'    # optional: weitere Ergebnisseiten
   #   type_default: kauf
 
 # ---------------------------------------------------------------------------
@@ -70,11 +98,13 @@ sources:
 geocoding:
   enabled: true
   # email: deine@adresse.de   # optional, empfohlen von der Nominatim-Nutzungsrichtlinie
-map_center: [49.4521, 11.0767]   # Nürnberg
+map_center: [49.4521, 11.0767]   # Startpunkt der Karten (hier Nürnberg; weglassen = ganz Deutschland)
+map_zoom: 11
 
 # Vorgaben für den Kostenrechner (auf der Detailseite im Browser änderbar)
 calculator:
-  grunderwerbsteuer_pct: 3.5     # Bayern
+  # grunderwerbsteuer_pct: 3.5   # weglassen = automatisch nach Bundesland der Wohnung
+  # grunderwerbsteuer_laender: {HB: 5.0}   # einzelne Landessätze überschreiben
   notar_grundbuch_pct: 2.0
   makler_pct: 3.57               # Käuferanteil; bei "provisionsfrei" automatisch 0
   eigenkapital: 60000

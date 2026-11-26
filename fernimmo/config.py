@@ -12,7 +12,7 @@ from .matcher import Profile
 
 # Vorgaben für den Kostenrechner (in config.yaml unter "calculator" änderbar)
 CALC_DEFAULTS = {
-    "grunderwerbsteuer_pct": 3.5,     # Bayern
+    "grunderwerbsteuer_pct": None,    # None = automatisch nach Bundesland der PLZ (siehe calc.py)
     "notar_grundbuch_pct": 2.0,
     "makler_pct": 3.57,               # Käuferanteil inkl. MwSt.; 0 bei "provisionsfrei"
     "eigenkapital": 60000,
@@ -55,7 +55,8 @@ class Config:
         self.user_agent: str | None = f.get("user_agent")
         self.proxy: str | None = f.get("proxy") or None
         self.sources: dict[str, dict] = {
-            k: v for k, v in (raw.get("sources") or {}).items() if v and _bool(v.get("enabled", True))
+            k: v for k, v in (raw.get("sources") or {}).items()
+            if v and _bool(v.get("enabled", True)) and v.get("urls")   # ohne Such-URL kein Abruf
         }
         self.profiles: list[Profile] = [Profile.from_dict(p) for p in raw.get("profiles", [])]
         n = raw.get("notify", {}) or {}
@@ -79,7 +80,8 @@ class Config:
         if "enabled" in g:
             g["enabled"] = _bool(g["enabled"])
         self.geocoding: dict[str, Any] = g
-        self.map_center: list[float] = raw.get("map_center", [49.4521, 11.0767])
+        self.map_center: list[float] = raw.get("map_center", [51.1634, 10.4477])   # Mitte Deutschlands
+        self.map_zoom: int = int(raw.get("map_zoom", 6 if "map_center" not in raw else 11))
         self.calculator: dict[str, Any] = {**CALC_DEFAULTS, **(raw.get("calculator") or {})}
 
     @classmethod

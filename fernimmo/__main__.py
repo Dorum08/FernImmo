@@ -78,12 +78,15 @@ def _check(cfg: Config, url: str, source: str | None) -> int:
     from .sources.base import SearchHit, guess_type
 
     if not source:
+        from .sources.generic import PORTALS
         domains = {"kleinanzeigen.de": "kleinanzeigen", "immowelt.de": "immowelt",
-                   "immobilienscout24.de": "immoscout24"}
-        source = next((name for dom, name in domains.items() if dom in url), None)
+                   "immobilienscout24.de": "immoscout24",
+                   **{p["domain"]: name for name, p in PORTALS.items()}}
+        from urllib.parse import urlparse
+        host = (urlparse(url).hostname or "").lower().removeprefix("www.")
+        source = next((name for dom, name in domains.items() if host == dom or host.endswith("." + dom)), None)
     if not source:
-        print("Quelle nicht erkannt, bitte --source angeben", file=sys.stderr)
-        return 2
+        source = "generic"   # lernfähiger Adapter für unbekannte Seiten
     scfg = cfg.sources.get(source, {"type": source})
     fetcher = make_fetcher(scfg.get("fetcher", cfg.fetcher), (0, 0), cfg.user_agent, cfg.proxy)
     try:

@@ -412,7 +412,9 @@ class DB:
     def search(self, *, match: str | None = None, fernwaerme: str | None = None, source: str | None = None,
                status: str | None = None, listing_type: str | None = None, active_only: bool = True,
                hide_duplicates: bool = True, q: str | None = None, sort: str = "first_seen",
-               liked: bool = False, user: str | None = None, limit: int = 300) -> list[dict]:
+               liked: bool = False, user: str | None = None, limit: int = 300,
+               rooms_min: float | None = None, rooms_max: float | None = None,
+               price_max: float | None = None) -> list[dict]:
         where, params = [], []
         if q and q.strip().lstrip("#").isdigit():
             # Suche nach FernImmo-ID: alle übrigen Filter ignorieren
@@ -438,6 +440,12 @@ class DB:
                 where.append("duplicate_of IS NULL")
             if liked:
                 where.append("id IN (SELECT listing_id FROM likes)")
+            if rooms_min is not None:
+                where.append("rooms >= ?"); params.append(rooms_min)
+            if rooms_max is not None:
+                where.append("rooms <= ?"); params.append(rooms_max)
+            if price_max is not None:
+                where.append("price <= ?"); params.append(price_max)
             if q:
                 where.append("(title LIKE ? OR raw_text LIKE ? OR address LIKE ?)"); params += [f"%{q}%"] * 3
         order = {

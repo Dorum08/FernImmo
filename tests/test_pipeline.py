@@ -304,9 +304,14 @@ def test_area_api_map_and_export(tmp_path, monkeypatch):
     assert c.delete(f"/api/areas/{aid}").status_code == 404
 
     # Seiten
-    for url in ("/", "/karte", "/gebiet", f"/listing/{lid}", "/static/plz_nuernberg.geojson",
-                "/static/leaflet/leaflet.js"):
+    for url in ("/", "/karte", "/gebiet", f"/listing/{lid}", "/static/leaflet/leaflet.js"):
         assert c.get(url).status_code == 200, url
+    r = c.get("/plz/90.geojson")
+    assert r.status_code == 200 and r.headers["content-encoding"] == "gzip"
+    assert any(f["properties"]["plz"] == "90443" for f in r.json()["features"])
+    assert "90443" in c.get("/plz/index.json").json()["plz"]
+    assert c.get("/plz/../config.geojson").status_code == 404
+    assert c.get("/plz/ab.geojson").status_code == 404
     det = c.get(f"/listing/{lid}").text
     assert "Kostenrechner" in det and "Marktlage" in det and "minimap" in det
     pts = c.get("/api/map?match=").json()

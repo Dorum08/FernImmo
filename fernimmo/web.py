@@ -21,13 +21,20 @@ from fastapi.templating import Jinja2Templates
 from .calc import costs
 from .config import Config
 from .db import DB
-from .geo import Geocoder, circle_polygon, haversine_km, plz_areas, plz_center, valid_geometry
+from .geo import PLZ_DIR, Geocoder, circle_polygon, haversine_km, plz_center, plz_state, valid_geometry
 from .notify import HEATING_NAMES, fmt_num
-from .pipeline import Scheduler, reprocess
+from .pipeline import CRITERIA_KEYS, Scheduler, reprocess
 
 STATUSES = ["neu", "favorit", "kontaktiert", "besichtigung", "ausgeblendet"]
 ANON_USER = "ich"
 HERE = Path(__file__).parent
+
+
+def _num(v: str) -> float | None:
+    try:
+        return float(str(v).replace(",", ".")) if str(v).strip() else None
+    except ValueError:
+        return None
 
 
 def _safe_back(back: str, fallback: str = "/") -> str:
@@ -46,12 +53,16 @@ class Filters:
     inactive: int = 0
     dupes: int = 0
     liked: int = 0
+    rooms_min: str = ""
+    rooms_max: str = ""
+    price_max: str = ""
 
     def search_args(self) -> dict:
         return dict(match=self.match or None, fernwaerme=self.fernwaerme or None, source=self.source or None,
                     status=self.status or None, listing_type=self.listing_type or None, q=self.q or None,
                     sort=self.sort, active_only=not self.inactive, hide_duplicates=not self.dupes,
-                    liked=bool(self.liked))
+                    liked=bool(self.liked), rooms_min=_num(self.rooms_min), rooms_max=_num(self.rooms_max),
+                    price_max=_num(self.price_max))
 
 
 class Reprocessor:
@@ -107,7 +118,8 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         if r.get("listing_type") != "kauf":
             return None
         d = r["data"]
-        return costs(r.get("price"), d.get("area"), d.get("hausgeld"), d.get("flags"), cfg.calculator)
+        return costs(r.get("price"), d.get("area"), d.get("hausgeld"), d.get("flags"), cfg.calculator,
+                     state=plz_state(r.get("plz")))
 
     templates.env.globals["calc_for"] = calc_for
 
@@ -136,6 +148,14 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
 
     def here_of(request: Request) -> str:
         return request.url.path + (f"?{request.url.query}" if request.url.query else "")
+
+    def criteria() -> dict:
+        """Aktuelle Suchkriterien: aus der Weboberfläche, sonst aus dem ersten Profil der config.yaml."""
+        saved = db.get_setting("criteria")
+        if saved is not None:
+            return saved
+        p = cfg.profiles[0] if cfg.profiles else None
+        return {k: getattr(p, k, None) for k in CRITERIA_KEYS}
 
     def area_summary() -> dict:
         return {"plz": db.get_setting("search_plz", []), "polygons": len(db.areas("search")),
@@ -167,15 +187,16 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
     @app.get("/karte", response_class=HTMLResponse)
     def map_page(request: Request, f: Filters = Depends(), user: str = Depends(auth)):
         return templates.TemplateResponse(request, "map.html", {
-            "f": asdict(f), "user": user, "query": request.url.query, "center": cfg.map_center,
+            "f": asdict(f), "user": user, "query": request.url.query, "center": cfg.map_center, "zoom": cfg.map_zoom,
             "sources": list(cfg.sources), "statuses": STATUSES,
         })
 
     @app.get("/gebiet", response_class=HTMLResponse)
     def area_page(request: Request, user: str = Depends(auth)):
         return templates.TemplateResponse(request, "area.html", {
-            "user": user, "center": cfg.map_center, "plz_list": sorted(plz_areas()),
-            "reprocessing": reproc.busy.is_set(),
+            "user": user, "center": cfg.map_center, "zoom": cfg.map_zoom,
+            "reprocessing": reproc.busy.is_set(), "criteria": criteria(),
+            "room_steps": [None] + [x / 2 for x in range(2, 17)],
         })
 
     @app.get("/runs", response_class=HTMLResponse)
@@ -351,9 +372,26 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         _changed()
         return {"ok": True}
 
+    @app.put("/api/criteria")
+    def api_criteria(payload: dict = Body(...), user: str = Depends(auth)):
+        out = {}
+        for k in CRITERIA_KEYS:
+            v = payload.get(k)
+            try:
+                out[k] = float(v) if v not in (None, "") and float(v) > 0 else None
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"Ungültiger Wert für {k}")
+        if out["rooms_min"] and out["rooms_max"] and out["rooms_min"] > out["rooms_max"]:
+            raise HTTPException(400, "Zimmer von > bis")
+        db.set_setting("criteria", out)
+        _changed()
+        return out
+
     @app.put("/api/search-plz")
     def api_search_plz(payload: dict = Body(...), user: str = Depends(auth)):
-        plz = sorted({str(p) for p in payload.get("plz", []) if str(p).isdigit() and len(str(p)) == 5})
+        # ganze PLZ oder PLZ-Anfänge (1–4 Ziffern); Anfänge, die eine andere Auswahl schon abdeckt, entfallen
+        raw = {str(p) for p in payload.get("plz", []) if str(p).isdigit() and 1 <= len(str(p)) <= 5}
+        plz = sorted(p for p in raw if not any(p != q and p.startswith(q) for q in raw))
         db.set_setting("search_plz", plz)
         _changed()
         return {"plz": plz}
@@ -367,12 +405,24 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         if q.isdigit() and len(q) == 5 and plz_center(q):
             lat, lon = plz_center(q)
             return {"lat": lat, "lon": lon, "label": f"PLZ {q} (Mittelpunkt)"}
-        city = cfg.geocoding.get("city_hint", "Nürnberg")
-        point = geocoder.geocode(q if "," in q or city.lower() in q.lower() else f"{q}, {city}") \
-            or geocoder.geocode(q)
+        city = cfg.geocoding.get("city_hint", "")
+        point = (geocoder.geocode(f"{q}, {city}") if city and "," not in q and city.lower() not in q.lower()
+                 else None) or geocoder.geocode(q)
         if not point:
             raise HTTPException(404, "Ort nicht gefunden")
         return {"lat": point[0], "lon": point[1], "label": q}
+
+    @app.get("/plz/{name}")
+    def plz_file(name: str):
+        """PLZ-Gebiete (gzip, vom Browser selbst entpackt): index.json oder 90.geojson usw."""
+        import re as _re
+        if not _re.fullmatch(r"(index\.json|\d{2}\.geojson)", name):
+            raise HTTPException(404)
+        path = PLZ_DIR / f"{name}.gz"
+        if not path.exists():
+            raise HTTPException(404)
+        return Response(path.read_bytes(), media_type="application/json",
+                        headers={"Content-Encoding": "gzip", "Cache-Control": "public, max-age=86400"})
 
     @app.get("/health")
     def health():

@@ -2,6 +2,7 @@
 Punkt-in-Polygon und Suchgebiets-Prüfung. Bewusst ohne Geo-Bibliotheken."""
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import math
@@ -16,7 +17,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-PLZ_FILE = Path(__file__).parent / "static" / "plz_nuernberg.geojson"
+PLZ_DIR = Path(__file__).parent / "static" / "plz"
 # Grober Rahmen Deutschland – schützt vor vertauschten oder unsinnigen Werten
 DE_LAT, DE_LON = (47.0, 55.2), (5.5, 15.5)
 STREET_RE = re.compile(
@@ -118,26 +119,61 @@ def circle_polygon(lat: float, lon: float, radius_km: float, n: int = 64) -> dic
 
 
 # --------------------------------------------------------------------------- PLZ-Gebiete
+# Alle deutschen PLZ-Gebiete (OSM), nach den ersten zwei Ziffern aufgeteilt und
+# gzip-komprimiert; der Index enthält je PLZ Mittelpunkt, Umriss-Rahmen und Bundesland.
 @lru_cache(maxsize=1)
-def plz_areas() -> dict[str, dict]:
-    """PLZ -> Feature (mitgelieferte OSM-Grenzen für den Raum Nürnberg)."""
+def plz_index() -> dict[str, Any]:
     try:
-        fc = json.loads(PLZ_FILE.read_text(encoding="utf-8"))
+        return json.loads(gzip.decompress((PLZ_DIR / "index.json.gz").read_bytes()))
+    except OSError:
+        log.warning("PLZ-Daten fehlen in %s", PLZ_DIR)
+        return {"plz": {}, "prefixes": {}}
+
+
+@lru_cache(maxsize=24)
+def plz_group(prefix: str) -> dict[str, dict]:
+    """Alle PLZ-Gebiete mit diesen zwei Anfangsziffern: PLZ -> Feature."""
+    if not re.fullmatch(r"\d{2}", prefix):
+        return {}
+    try:
+        fc = json.loads(gzip.decompress((PLZ_DIR / f"{prefix}.geojson.gz").read_bytes()))
     except OSError:
         return {}
     return {f["properties"]["plz"]: f for f in fc["features"]}
 
 
+def plz_feature(plz: str | None) -> dict | None:
+    return plz_group(plz[:2]).get(plz) if plz and len(plz) == 5 else None
+
+
+def plz_exists(plz: str | None) -> bool:
+    return bool(plz) and plz in plz_index()["plz"]
+
+
 def plz_center(plz: str | None) -> tuple[float, float] | None:
-    f = plz_areas().get(plz or "")
-    return tuple(f["properties"]["center"]) if f else None  # type: ignore[return-value]
+    v = plz_index()["plz"].get(plz or "")
+    return (v["c"][0], v["c"][1]) if v else None
+
+
+def plz_state(plz: str | None) -> str | None:
+    """Bundesland-Kürzel (BY, BE, …) der PLZ – bei PLZ auf Landesgrenzen nach Lage des Mittelpunkts."""
+    v = plz_index()["plz"].get(plz or "")
+    return v["s"] if v else None
 
 
 def plz_for_point(lat: float, lon: float) -> str | None:
-    for plz, f in plz_areas().items():
-        if point_in(lat, lon, f["geometry"]):
-            return plz
+    for plz, v in plz_index()["plz"].items():
+        b = v["b"]
+        if b[0] <= lat <= b[2] and b[1] <= lon <= b[3]:
+            f = plz_feature(plz)
+            if f and point_in(lat, lon, f["geometry"]):
+                return plz
     return None
+
+
+def plz_selected(plz: str | None, selection: Iterable[str]) -> bool:
+    """Auswahl kann ganze PLZ (90443) oder Anfänge (904, 9) enthalten."""
+    return bool(plz) and any(plz.startswith(s) for s in selection)
 
 
 # --------------------------------------------------------------------------- Koordinaten aus HTML
@@ -194,7 +230,7 @@ class Geocoder:
         if cfg.get("email"):
             ua += f" {cfg['email']}"
         self.headers = {"User-Agent": ua, "Accept-Language": "de"}
-        self.city_hint = cfg.get("city_hint", "Nürnberg")
+        self.city_hint = cfg.get("city_hint", "")      # optional, z.B. "Nürnberg"
         self._lock = threading.Lock()
         self._last = 0.0
 
@@ -232,18 +268,13 @@ class Geocoder:
         if portal_coords:
             return portal_coords[0], portal_coords[1], "portal"
         if address and has_street(address):
-            q = address if (plz and plz in address) or self.city_hint.lower() in address.lower() \
-                else f"{address}, {plz or ''} {self.city_hint}"
+            q = address if (plz and plz in address) else f"{address}, {plz or self.city_hint}".rstrip(", ")
             p = self.geocode(q)
             if p:
                 return p[0], p[1], "adresse"
         c = plz_center(plz)
         if c:
             return c[0], c[1], "plz"
-        if plz:
-            p = self.geocode(f"{plz}, Deutschland")
-            if p:
-                return p[0], p[1], "plz"
         return None, None, None
 
 
@@ -271,14 +302,14 @@ class AreaFilter:
     def check(self, data: dict) -> bool | None:
         """True = im Gebiet, False = außerhalb, None = unklar (Lage zu ungenau bekannt)."""
         plz, lat, lon, prec = data.get("plz"), data.get("lat"), data.get("lon"), data.get("geo_precision")
-        if plz and plz in self.plz:
+        if plz_selected(plz, self.plz):
             return True
         if not self.polygons:
             return False if plz or lat is not None else None
         if lat is not None and prec in ("portal", "adresse"):
             return self._inside_exact(lat, lon)
         # Nur die PLZ ist bekannt: überschneidet sich das PLZ-Gebiet mit einer gezeichneten Fläche?
-        feat = plz_areas().get(plz or "")
+        feat = plz_feature(plz)
         if feat:
             return None if any(overlaps(feat["geometry"], g) for g in self.polygons) else False
         return None

@@ -20,10 +20,65 @@ const FI = {
     return r.json();
   },
 
-  _plz: null,
-  async plz() {
-    if (!this._plz) this._plz = await this.json("/static/plz_nuernberg.geojson");
-    return this._plz;
+  // --- PLZ-Gebiete (ganz Deutschland, nach den ersten zwei Ziffern aufgeteilt) ---
+  _plzIndex: null,
+  _plzGroups: {},
+  plzIndex() {
+    if (!this._plzIndex) this._plzIndex = this.json("/plz/index.json");
+    return this._plzIndex;
+  },
+  plzGroup(prefix) {
+    if (!this._plzGroups[prefix]) this._plzGroups[prefix] = this.json(`/plz/${prefix}.geojson`);
+    return this._plzGroups[prefix];
+  },
+  /** Auswahl kann ganze PLZ oder Anfänge („904“, „1“) enthalten. */
+  plzSelected(plz, selection) {
+    for (const s of selection) if (plz.startsWith(s)) return true;
+    return false;
+  },
+  /** Alle PLZ-Gebiete, die zur Auswahl gehören (für die Anzeige). */
+  async selectedFeatures(selection) {
+    const sel = [...selection];
+    if (!sel.length) return [];
+    const idx = await this.plzIndex();
+    const prefixes = Object.keys(idx.prefixes).filter(p => sel.some(s => p.startsWith(s.slice(0, 2)) || s.startsWith(p)));
+    const groups = await Promise.all(prefixes.map(p => this.plzGroup(p)));
+    return groups.flatMap(g => g.features).filter(f => this.plzSelected(f.properties.plz, sel));
+  },
+  /**
+   * Lädt beim Verschieben/Zoomen die PLZ-Gebiete des sichtbaren Ausschnitts nach
+   * (ab Zoomstufe minZoom). style(plz) und onClick(plz) kommen vom Aufrufer.
+   */
+  plzLayer(map, {style, onClick, minZoom = 10, onZoomHint}) {
+    const group = L.featureGroup().addTo(map);
+    const loaded = {};
+    const layers = {};
+    const update = async () => {
+      const show = map.getZoom() >= minZoom;
+      if (onZoomHint) onZoomHint(!show);
+      if (!show) { if (map.hasLayer(group)) map.removeLayer(group); return; }
+      if (!map.hasLayer(group)) group.addTo(map);
+      const idx = await this.plzIndex();
+      const b = map.getBounds();
+      for (const [prefix, bb] of Object.entries(idx.prefixes)) {
+        if (loaded[prefix] || bb[0] > b.getNorth() || bb[2] < b.getSouth() || bb[1] > b.getEast() || bb[3] < b.getWest()) continue;
+        loaded[prefix] = true;
+        const fc = await this.plzGroup(prefix);
+        L.geoJSON(fc, {
+          style: f => style(f.properties.plz),
+          onEachFeature: (f, layer) => {
+            const plz = f.properties.plz;
+            layers[plz] = layer;
+            layer.bindTooltip(plz, {sticky: true});
+            if (onClick) layer.on("click", () => onClick(plz));
+          },
+        }).eachLayer(l => group.addLayer(l));
+        group.bringToBack();
+      }
+    };
+    map.on("moveend", update);
+    update();
+    return {restyle: () => { for (const [plz, l] of Object.entries(layers)) l.setStyle(style(plz)); }};
   },
 
   esc(s) {

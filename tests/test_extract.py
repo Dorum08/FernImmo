@@ -127,3 +127,22 @@ def test_kauf_flags():
     assert "vermietet" not in d["flags"]
     assert "versteigerung" in extract("Zwangsversteigerung, Termin beim Amtsgericht")["flags"]
     assert "versteigerung" not in extract("Makler GmbH, HRB 123 Amtsgericht Nürnberg")["flags"]
+
+
+def test_half_rooms_and_words():
+    cases = {
+        "Schöne 2,5-Zimmer-Wohnung": 2.5, "2.5 Zimmer ETW": 2.5, "2½ Zimmer mit Balkon": 2.5,
+        "Gemütliche 3 1/2 Zimmer Wohnung": 3.5, "Zweieinhalb-Zimmer-Wohnung in Top-Lage": 2.5,
+        "Eineinhalbzimmerwohnung": 1.5, "Zweizimmerwohnung mit EBK": 2, "Helle Drei-Zimmer-Wohnung": 3,
+        "1,5 Zi.-Whg.": 1.5, "Zimmer: 4,5": 4.5, "Zimmeranzahl: 1,5": 1.5,
+    }
+    for text, expected in cases.items():
+        assert extract("", title=text)["rooms"] == expected, text
+    assert extract("", structured={"Zimmer": "2,5"})["rooms"] == 2.5
+
+
+def test_plz_germany():
+    assert extract("Lage: 10115 Berlin-Mitte")["plz"] == "10115"
+    assert extract("Kaufpreis 25000 €, Wohnung in 80331 München")["plz"] == "80331"   # Preis ist keine PLZ
+    assert extract("Objekt-Nr. 99999 in 50667 Köln")["plz"] == "50667"               # 99999 existiert nicht
+    assert extract("ohne Ortsangabe")["plz"] is None

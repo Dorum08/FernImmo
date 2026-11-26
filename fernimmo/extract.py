@@ -132,6 +132,34 @@ def classify_heating(value: str, structured: bool) -> set[str]:
     return found
 
 
+_HALF_WORDS = {"eineinhalb": "1,5", "anderthalb": "1,5", "zweieinhalb": "2,5", "dreieinhalb": "3,5",
+               "viereinhalb": "4,5", "fünfeinhalb": "5,5", "fuenfeinhalb": "5,5", "sechseinhalb": "6,5"}
+_NUM_WORDS = {"ein": "1", "zwei": "2", "drei": "3", "vier": "4", "fünf": "5", "fuenf": "5", "sechs": "6"}
+
+
+def normalize_rooms(text: str) -> str:
+    """Vereinheitlicht Zimmerangaben: 2½ / 2 1/2 / zweieinhalb -> 2,5; Zweizimmer- -> 2-Zimmer."""
+    t = re.sub(r"(\d)\s*½", r"\1,5", text)
+    t = re.sub(r"(\d)\s+1/2(?=\s|-|$)", r"\1,5", t)
+    for w, n in _HALF_WORDS.items():
+        t = re.sub(rf"\b{w}(?=[\s-]*(?:zimmer|zi\b|raum))", n + " ", t, flags=re.IGNORECASE)
+    for w, n in _NUM_WORDS.items():
+        t = re.sub(rf"\b{w}[\s-]*(?=zimmer|raum)", n + "-", t, flags=re.IGNORECASE)
+    return t
+
+
+def find_plz(text: str) -> str | None:
+    """Erste gültige deutsche PLZ. Bevorzugt '12345 Ortsname', geprüft gegen das PLZ-Verzeichnis,
+    damit Preise oder Objektnummern nicht als PLZ durchgehen."""
+    from .geo import plz_exists
+    for pat in (r"(?<![\d.,])(\d{5})(?=\s+[A-ZÄÖÜ][a-zäöüß])", r"(?:PLZ|Postleitzahl)\s*:?\s*(\d{5})\b",
+                r"(?<![\d.,])(\d{5})(?![\d.,])"):
+        for m in re.finditer(pat, text):
+            if plz_exists(m.group(1)):
+                return m.group(1)
+    return None
+
+
 def extract(text: str, title: str = "", structured: dict[str, str] | None = None) -> dict[str, Any]:
     """Extrahiert Merkmale.
 
@@ -152,11 +180,12 @@ def extract(text: str, title: str = "", structured: dict[str, str] | None = None
     ], full, lo=8, hi=400)
 
     # --- Zimmer ------------------------------------------------------------
+    rtext = normalize_rooms(full)
     d["rooms"] = _first([
-        r"(?:zimmeranzahl|anzahl\s+zimmer|zimmer)\s*:\s*(\d{1,2}(?:[.,]5)?)",
+        r"(?:zimmeranzahl|anzahl\s+zimmer|zimmer)\s*:\s*(\d{1,2}(?:[.,]5)?)(?![\d])",
         r"(\d{1,2}(?:[.,]5)?)\s*-?\s*(?:zimmer|zi\.?|raum|zkb|zk\b)",
         r"(?:zimmer|zi\.)\s+(\d{1,2}(?:[.,]5)?)\b",
-    ], full, lo=0.5, hi=12)
+    ], rtext, lo=0.5, hi=12)
     if d["rooms"] is None and re.search(r"\b(?:1-zi|einzimmer|ein-zimmer|appartement|apartment)\b", low):
         d["rooms"] = 1.0
 
@@ -234,8 +263,7 @@ def extract(text: str, title: str = "", structured: dict[str, str] | None = None
         d["fernwaerme"] = "unbekannt"
 
     # --- Lage --------------------------------------------------------------
-    m = re.search(r"\b(9[01]\d{3})\b", full)
-    d["plz"] = m.group(1) if m else None
+    d["plz"] = find_plz(f"{struct_text}\n{title}\n{text}")
 
     # --- Ausstattung & Hinweise --------------------------------------------
     d["features"] = sorted(k for k, p in FEATURES.items() if re.search(p, low))

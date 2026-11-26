@@ -1,35 +1,36 @@
 {% extends "base.html" %}
-{% block title %}Suchgebiet – FernImmo{% endblock %}
+{% block title %}Suche – FernImmo{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="/static/leaflet/leaflet.css">
 <script src="/static/leaflet/leaflet.js"></script>
 <script src="/static/fernimmo-map.js"></script>
 {% endblock %}
 {% block content %}
-<h2 style="margin-top:0">Suchgebiet</h2>
-<p class="muted">Eine Wohnung zählt als „im Gebiet“, wenn ihre PLZ ausgewählt ist <b>oder</b> sie in einer
-gezeichneten Fläche liegt. Ist nur die PLZ bekannt und das PLZ-Gebiet überschneidet eine Fläche, gilt die Lage
-als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code>config.yaml</code>.</p>
+<h2 style="margin-top:0">Suche: Kriterien &amp; Gebiet</h2>
 <div id="status" class="card small" {% if not reprocessing %}hidden{% endif %}>⏳ Inserate werden neu bewertet …</div>
 
 <div class="area-layout">
   <div>
+    <form id="goto" class="toolbar" onsubmit="return false">
+      <input id="goto-q" placeholder="Ort in Deutschland suchen, z.B. Leipzig, Köln-Ehrenfeld, 80331" style="flex:1;min-width:200px">
+      <button id="goto-btn">Hinspringen</button>
+    </form>
     <div class="toolbar">
-      <button id="draw-search" class="primary">✏️ Suchgebiet zeichnen</button>
+      <button id="draw-search" class="primary">✏️ Fläche zeichnen</button>
       <button id="draw-circle">◎ Umkreis</button>
-      <button id="draw-fw">🔥 Fernwärme-Gebiet zeichnen</button>
-      <span id="hint" class="muted small">PLZ-Gebiete anklicken zum Auswählen.</span>
+      <button id="draw-fw">🔥 Fernwärme-Gebiet</button>
+      <span id="hint" class="muted small"></span>
     </div>
     <div id="circle-panel" class="card circle-panel" hidden>
       <form id="circle-search" class="circle-row">
         <label style="flex:2">Ort, Adresse oder PLZ
-          <input id="circle-q" placeholder="z.B. Plärrer, Fürther Str. 100 oder 90429" autocomplete="off"></label>
+          <input id="circle-q" placeholder="z.B. Marienplatz München, Hauptstr. 5 Leipzig oder 50667" autocomplete="off"></label>
         <button>Suchen</button>
         <span class="muted small" style="align-self:center">… oder in die Karte klicken</span>
       </form>
       <div class="circle-row">
         <label style="flex:2">Radius: <b id="circle-r-label">2 km</b>
-          <input type="range" id="circle-r" min="0.5" max="20" step="0.5" value="2"></label>
+          <input type="range" id="circle-r" min="0.5" max="50" step="0.5" value="2"></label>
         <label style="flex:1">Name<input id="circle-name" placeholder="z.B. Arbeit"></label>
         <button id="circle-save" class="primary" disabled>Umkreis speichern</button>
         <button id="circle-cancel" type="button">Abbrechen</button>
@@ -37,64 +38,116 @@ als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code
       <div id="circle-msg" class="small muted"></div>
     </div>
     <div id="map" class="map-big"></div>
-    <p class="muted small">PLZ-Grenzen: © OpenStreetMap-Mitwirkende (ODbL), Stand Februar 2026.</p>
+    <p class="muted small">Eine Wohnung zählt als „im Gebiet“, wenn ihre PLZ ausgewählt ist <b>oder</b> sie in einer
+      Fläche bzw. einem Umkreis liegt. Ist nur die PLZ bekannt und das PLZ-Gebiet schneidet eine Fläche, gilt die Lage
+      als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Angabe aus <code>config.yaml</code>.
+      PLZ-Grenzen: © OpenStreetMap-Mitwirkende (ODbL), Stand Februar 2026.</p>
   </div>
   <aside>
-    <div class="card">
-      <h3 style="margin-top:0">Ausgewählte PLZ <span id="plz-count" class="badge"></span></h3>
-      <div class="plz-tools">
-        <button type="button" id="plz-nbg" class="small-btn">Stadt Nürnberg (904xx)</button>
-        <button type="button" id="plz-none" class="small-btn">keine</button>
+    <form class="card" id="criteria" onsubmit="return false">
+      <h3 style="margin-top:0">Suchkriterien</h3>
+      <div class="crit-grid">
+        <label>Zimmer von<select name="rooms_min">{% for v in room_steps %}<option value="{{ v if v else '' }}" {% if criteria.rooms_min == v %}selected{% endif %}>{{ v|num("", 1 if v % 1 else 0) if v else "beliebig" }}</option>{% endfor %}</select></label>
+        <label>Zimmer bis<select name="rooms_max">{% for v in room_steps %}<option value="{{ v if v else '' }}" {% if criteria.rooms_max == v %}selected{% endif %}>{{ v|num("", 1 if v % 1 else 0) if v else "beliebig" }}</option>{% endfor %}</select></label>
+        <label>Kaufpreis bis €<input type="number" name="price_max" step="5000" min="0" value="{{ criteria.price_max|int if criteria.price_max }}" placeholder="beliebig"></label>
+        <label>Wohnfläche ab m²<input type="number" name="area_min" step="1" min="0" value="{{ criteria.area_min|int if criteria.area_min }}" placeholder="beliebig"></label>
       </div>
-      <div id="plz-list" class="plz-list">
-        {% for p in plz_list %}<label class="plz-chip"><input type="checkbox" value="{{ p }}"> {{ p }}</label>{% endfor %}
-      </div>
-      <label class="small muted" style="margin-top:8px">Weitere PLZ (kommagetrennt, außerhalb der Karte)
-        <input id="plz-extra" placeholder="z.B. 91301"></label>
+      <p class="small muted" style="margin:6px 0 0">Halbe Zimmer zählen mit: „1 bis 2“ findet 1, 1,5 und 2 Zimmer.
+        Gilt für alle Suchprofile und wird sofort angewendet.</p>
+      <p id="crit-msg" class="small" style="margin:4px 0 0"></p>
+    </form>
+    <div class="card" style="margin-top:10px">
+      <h3 style="margin-top:0">PLZ <span id="plz-count" class="badge"></span></h3>
+      <form id="plz-add" class="circle-row" onsubmit="return false">
+        <label style="flex:1">PLZ oder PLZ-Anfang<input id="plz-input" placeholder="z.B. 90443, 904 oder 10" inputmode="numeric"></label>
+        <button>Hinzufügen</button>
+      </form>
+      <p class="small muted" style="margin:6px 0">„904“ wählt alle PLZ, die mit 904 beginnen. Ab Stadtzoom kannst du
+        PLZ-Gebiete auch direkt in der Karte anklicken.</p>
+      <div id="plz-chips" class="plz-list"></div>
+      <button type="button" id="plz-none" class="small-btn" style="margin-top:6px">alle entfernen</button>
     </div>
     <div class="card" style="margin-top:10px">
-      <h3 style="margin-top:0">Gezeichnete Flächen</h3>
+      <h3 style="margin-top:0">Flächen &amp; Umkreise</h3>
       <ul id="area-list" class="area-list"></ul>
       <p class="muted small">Fernwärme-Gebiete (rot) sind nur ein Hinweis: Steht im Inserat keine Heizung, wird
-        „liegt im Fernwärme-Gebiet“ angezeigt. Die Netzkarte gibt es beim Versorger (N-ERGIE).</p>
+        „liegt im Fernwärme-Gebiet“ angezeigt. Netzpläne gibt es beim örtlichen Versorger.</p>
     </div>
   </aside>
 </div>
 
 <script>
 (async () => {
-  const map = FI.map("map", {{ center|tojson }}, 11);
+  const map = FI.map("map", {{ center|tojson }}, {{ zoom }});
   window.FI_MAP = map;
   const state = await FI.json("/api/areas");
   let selected = new Set(state.plz);
-  const known = new Set();
-  const plzLayers = {};
   const areaLayers = {};
+  let drawing = null;   // Stopp-Funktion während Freihand-Zeichnen
   const $ = id => document.getElementById(id);
+  const idx = await FI.plzIndex();
 
-  // --- PLZ-Gebiete ---------------------------------------------------------
-  const plz = await FI.plz();
-  const styleFor = p => selected.has(p)
+  // --- Ort suchen ----------------------------------------------------------
+  $("goto-btn").onclick = async () => {
+    const q = $("goto-q").value.trim();
+    if (!q) return;
+    try {
+      const r = await FI.json("/api/geocode?q=" + encodeURIComponent(q));
+      map.setView([r.lat, r.lon], 12);
+    } catch (e) { alert("Ort nicht gefunden."); }
+  };
+
+  // --- Suchkriterien -------------------------------------------------------
+  const crit = $("criteria");
+  crit.addEventListener("change", async () => {
+    const v = {};
+    for (const el of crit.elements) v[el.name] = el.value === "" ? null : parseFloat(el.value) || null;
+    if (v.rooms_min && v.rooms_max && v.rooms_min > v.rooms_max) {
+      $("crit-msg").textContent = "„Zimmer von“ ist größer als „bis“."; return;
+    }
+    await FI.json("/api/criteria", {method: "PUT", body: JSON.stringify(v)});
+    $("crit-msg").textContent = "✅ gespeichert";
+    setTimeout(() => $("crit-msg").textContent = "", 2000);
+    busy();
+  });
+
+  // --- PLZ-Auswahl ---------------------------------------------------------
+  const styleFor = p => FI.plzSelected(p, selected)
     ? {color: FI.colors.plzSel, weight: 2, fillColor: FI.colors.plzSel, fillOpacity: 0.28}
     : {color: "#64748b", weight: 1, fillOpacity: 0.03};
-  const plzGroup = L.geoJSON(plz, {
-    style: f => styleFor(f.properties.plz),
-    onEachFeature: (f, layer) => {
-      const p = f.properties.plz;
-      known.add(p);
-      plzLayers[p] = layer;
-      layer.bindTooltip(p, {sticky: true});
-      layer.on("click", () => { if (!drawing && document.getElementById("circle-panel").hidden) togglePlz(p); });
-    },
-  }).addTo(map);
-  map.fitBounds(plzGroup.getBounds(), {padding: [10, 10]});
-
-  const checkboxes = [...document.querySelectorAll("#plz-list input")];
+  const plzLayer = FI.plzLayer(map, {
+    style: styleFor,
+    onClick: p => { if (!drawing && $("circle-panel").hidden) togglePlz(p); },
+    onZoomHint: tooFar => { if (!drawing) $("hint").textContent = tooFar
+      ? "Näher heranzoomen, um PLZ-Gebiete anzuklicken." : "PLZ-Gebiete anklicken zum Auswählen."; },
+  });
+  let selLayer = null;
+  async function showSelection() {
+    // Ausgewählte Gebiete auch bei kleinem Zoom zeigen
+    if (selLayer) map.removeLayer(selLayer);
+    const feats = await FI.selectedFeatures(selected);
+    selLayer = L.geoJSON({type: "FeatureCollection", features: feats},
+      {style: {color: FI.colors.plzSel, weight: 1, fillOpacity: 0.15}, interactive: false}).addTo(map);
+    selLayer.bringToBack();
+    return selLayer;
+  }
+  function chipLabel(p) {
+    if (p.length === 5) return p;
+    const n = Object.keys(idx.plz).filter(x => x.startsWith(p)).length;
+    return `${p}… (${n} PLZ)`;
+  }
   function refreshPlz() {
-    for (const [p, layer] of Object.entries(plzLayers)) layer.setStyle(styleFor(p));
-    checkboxes.forEach(c => { c.checked = selected.has(c.value); c.parentElement.classList.toggle("on", c.checked); });
-    $("plz-extra").value = [...selected].filter(p => !known.has(p)).join(", ");
+    plzLayer.restyle();
     $("plz-count").textContent = selected.size;
+    $("plz-chips").innerHTML = "";
+    for (const p of [...selected].sort()) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "plz-chip on"; b.title = "entfernen";
+      b.textContent = chipLabel(p) + " ✕";
+      b.onclick = () => { selected.delete(p); refreshPlz(); savePlz(); };
+      $("plz-chips").appendChild(b);
+    }
+    showSelection();
   }
   let saveTimer;
   function savePlz() {
@@ -106,14 +159,29 @@ als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code
       busy();
     }, 600);
   }
-  function togglePlz(p) { selected.has(p) ? selected.delete(p) : selected.add(p); refreshPlz(); savePlz(); }
-  checkboxes.forEach(c => c.addEventListener("change", () => togglePlz(c.value)));
-  $("plz-extra").addEventListener("change", e => {
-    [...selected].filter(p => !known.has(p)).forEach(p => selected.delete(p));
-    e.target.value.split(/[,\s;]+/).filter(p => /^\d{5}$/.test(p)).forEach(p => selected.add(p));
+  function togglePlz(p) {
+    if (selected.has(p)) selected.delete(p);
+    else {
+      const prefix = [...selected].find(s => p.startsWith(s));
+      if (prefix) {
+        // PLZ steckt in einem Anfang wie „904“: Anfang in Einzel-PLZ auflösen, diese eine weglassen
+        selected.delete(prefix);
+        Object.keys(idx.plz).filter(x => x.startsWith(prefix) && x !== p).forEach(x => selected.add(x));
+      } else selected.add(p);
+    }
     refreshPlz(); savePlz();
-  });
-  $("plz-nbg").onclick = () => { [...known].filter(p => p.startsWith("904")).forEach(p => selected.add(p)); refreshPlz(); savePlz(); };
+  }
+  $("plz-add").onsubmit = async e => {
+    e.preventDefault();
+    const vals = $("plz-input").value.split(/[,\s;]+/).filter(v => /^\d{1,5}$/.test(v));
+    const unknown = vals.filter(v => !Object.keys(idx.plz).some(x => x.startsWith(v)));
+    if (unknown.length) { alert("Unbekannte PLZ: " + unknown.join(", ")); return; }
+    vals.forEach(v => selected.add(v));
+    $("plz-input").value = "";
+    refreshPlz(); savePlz();
+    const l = await showSelection();
+    if (vals.length && l.getLayers().length) map.fitBounds(l.getBounds(), {padding: [20, 20]});
+  };
   $("plz-none").onclick = () => { selected.clear(); refreshPlz(); savePlz(); };
   refreshPlz();
 
@@ -124,7 +192,7 @@ als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code
     areaLayers[a.id] = layer;
   }
   function renderList(areas) {
-    $("area-list").innerHTML = areas.length ? "" : '<li class="muted small">Noch keine – oben „zeichnen“ oder „Umkreis“ wählen.</li>';
+    $("area-list").innerHTML = areas.length ? "" : '<li class="muted small">Noch keine – oben „Fläche zeichnen“ oder „Umkreis“ wählen.</li>';
     for (const a of areas) {
       const li = document.createElement("li");
       li.innerHTML = `<span class="dot" style="background:${a.kind === "fw" ? FI.colors.fw : FI.colors.search}"></span>
@@ -153,7 +221,6 @@ als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code
   areas.forEach(addAreaLayer);
   renderList(areas);
 
-  let drawing = null;
   function startDraw(kind) {
     if (drawing) { drawing(); drawing = null; resetHint(); return; }
     $("hint").textContent = "Maustaste/Finger gedrückt halten und das Gebiet umfahren. Esc bricht ab.";
