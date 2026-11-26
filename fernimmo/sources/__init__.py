@@ -24,6 +24,6 @@ def build_source(name: str, cfg: dict[str, Any], fetcher: Fetcher) -> Source:
     if cls is None:
         raise ValueError(f"Unbekannter Quellentyp: {kind} (bekannt: {', '.join(sorted(REGISTRY))})")
     src = cls({**cfg, "portal": kind} if cls is GenericSource else cfg, fetcher)
-    if cls is GenericSource:
-        src.name = name
+    # Eigener Name je Konfigurationseintrag (z. B. zweiter Kleinanzeigen-Eintrag für Vergleichsmieten)
+    src.name = name
     return src

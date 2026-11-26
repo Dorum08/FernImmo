@@ -79,6 +79,16 @@ sources:
     urls: []
     type_default: kauf
 
+  # Vergleichsmieten: Miet-Suchseiten mitlesen, damit Kostenrechner und Marktseite mit
+  # echten Mieten aus derselben PLZ rechnen (statt calculator.miete_pro_qm).
+  # mieten-kleinanzeigen:
+  #   type: kleinanzeigen
+  #   vergleichsmieten: true
+  #   urls:
+  #     - url: https://www.kleinanzeigen.de/s-wohnung-mieten/nuernberg/anzeige:angebote/c203l976
+  #       type: miete
+  #   max_details_per_run: 20
+
   # Beliebige weitere Seite (z.B. Wohnungsbaugesellschaft, Makler-Website):
   # meine-seite:
   #   type: generic
@@ -114,7 +124,10 @@ calculator:
   hausgeld_nicht_umlagefaehig_pct: 35
 
 # ---------------------------------------------------------------------------
-# Suchprofile. "voll" = alles erfüllt und Fernwärme bestätigt,
+# Suchprofile – nur für den ALLERERSTEN Start: daraus werden die Suchen angelegt.
+# Danach pflegst du Suchen (beliebig viele, mit Namen, Kriterien und Gebiet)
+# in der Weboberfläche unter „Suchen“; Änderungen hier wirken dann nicht mehr.
+# "voll" = alles erfüllt und Fernwärme bestätigt,
 # "teilweise" = nichts spricht dagegen, aber z.B. Heizung nicht angegeben.
 # ---------------------------------------------------------------------------
 profiles:
@@ -126,7 +139,7 @@ profiles:
     # price_max: 250000          # max. Kaufpreis in €
     heating_required: [fernwaerme]
     unknown_heating: teilweise   # teilweise = trotzdem melden (gelb) | ignorieren
-    plz: ["90"]                  # nur solange kein Suchgebiet in der Weboberfläche festgelegt ist
+    plz: ["904"]                 # Gebiet der ersten Suche (PLZ oder PLZ-Anfänge); leer = bundesweit
     exclude_flags: [gesuch, versteigerung]
     # weitere Ausschlüsse: erbpacht, vermietet (= Kapitalanlage mit Mieter), denkmal,
     #                      wbs, senioren, tausch, wg, befristet
@@ -140,11 +153,15 @@ notify:
   levels: [voll, teilweise]   # welche Treffer gemeldet werden
   price_drops: true           # Preissenkung bei gemeldeten oder gelikten Inseraten melden
   first_run: false            # beim allerersten Lauf nicht jeden Altbestand einzeln melden
+  alert_failed_runs: 3        # Warnung, wenn ein Portal so viele Läufe in Folge nichts liefert (0 = aus)
 
   telegram:
     enabled: ${TELEGRAM_ENABLED:-false}
     bot_token: ${TELEGRAM_BOT_TOKEN}
     chat_id: ${TELEGRAM_CHAT_ID}
+    buttons: true               # Knöpfe „Like“, „Ausblenden“, „Details“ unter jeder Meldung
+    # users:                    # Telegram-Nutzer-ID -> Name in FernImmo (für Likes); sonst erster Web-Nutzer
+    #   123456789: ich
 
   ntfy:
     enabled: ${NTFY_ENABLED:-false}
@@ -169,3 +186,12 @@ web:
   users:
     ich: ${WEB_PASSWORD}
     # zweite_person: ${WEB_PASSWORD_2}
+  # Adresse, unter der du FernImmo vom Handy aus erreichst (z. B. über WireGuard).
+  # Wird für den „Details“-Knopf in Telegram genutzt.
+  # public_url: http://192.168.178.10:8080
+
+# Tägliche Datensicherung der Datenbank (Likes, Kommentare, Verlauf, Suchen)
+backup:
+  enabled: true
+  # dir: data/backups         # Standard: Ordner "backups" neben der Datenbank
+  keep: 14                    # so viele Tagesstände behalten

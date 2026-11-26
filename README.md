@@ -15,15 +15,19 @@ Zimmerzahl stellst du in der Weboberfläche unter „Suche“ um.
 
 | | |
 |---|---|
+| **Mehrere Suchen** | Beliebig viele benannte Suchen („Nürnberg Fernwärme“, „Fürth bis 200.000 €“ …), jede mit eigenen Kriterien und eigenem Gebiet, einzeln pausier- und stummschaltbar. Übersicht und Karte lassen sich nach Suche filtern, jede Meldung nennt die passende Suche. |
+| **Android-App** | APK für den Zugriff über WireGuard: speichert Server-Adresse und Login, lädt Exporte herunter, öffnet Portal-Links im Browser. Wird bei jeder Änderung automatisch auf GitHub gebaut. |
 | **Quellen** | Eigene Adapter: Kleinanzeigen, Immowelt, ImmoScout24 (optional, siehe unten). Lernfähiger Adapter: Ohne-Makler, Immobilo, Immobilien.de, meinestadt.de, IVD24, RegionalImmobilien24, 1A-Immobilienmarkt und beliebige weitere Seiten. Siehe „Portale“. |
-| **Zimmer** | Erkennt auch halbe Zimmer in allen üblichen Schreibweisen (2,5 · 2.5 · 2½ · 2 1/2 · zweieinhalb) und ausgeschriebene Zahlen (Zweizimmerwohnung). Zimmer von/bis in 0,5er-Schritten unter „Suche“ (gilt für Meldungen) und als Filter in Übersicht und Karte. |
+| **Zimmer** | Erkennt auch halbe Zimmer in allen üblichen Schreibweisen (2,5 · 2.5 · 2½ · 2 1/2 · zweieinhalb) und ausgeschriebene Zahlen (Zweizimmerwohnung). Zimmer von/bis in 0,5er-Schritten je Suche und als Filter in Übersicht und Karte. |
 | **Auswertung** | Wohnfläche, Zimmer, Kalt-/Warmmiete, Nebenkosten, Heizkosten, Kaufpreis, Hausgeld, €/m², Baujahr, Energieträger (Fernwärme, Nahwärme, Gas, Öl, Wärmepumpe, Pellets, Strom, BHKW), Heizungsart, Energieklasse und Kennwert, Etage, PLZ, „verfügbar ab“, Ausstattung (Balkon, EBK, Aufzug, Keller, Stellplatz …) |
 | **Hinweise & Ausschlüsse** | Gesuche, Zwangsversteigerungen (standardmäßig ausgeschlossen); erkannt und angezeigt werden außerdem Erbpacht, vermietete Wohnungen, Denkmalschutz, provisionsfrei; eigene Stichwörter möglich |
 | **Treffer-Stufen** | **voll**: alle Kriterien erfüllt und Fernwärme bestätigt. **teilweise**: nichts spricht dagegen, aber z. B. die Heizung steht nicht im Inserat. Wird ein anderer Energieträger genannt, fällt das Inserat raus. |
 | **IDs, Likes, Kommentare** | Jede Wohnung hat eine feste FernImmo-ID (#12; auch in den Meldungen, über die Suche direkt aufrufbar). Auf der Übersicht kann jede angemeldete Person liken und kommentieren; man sieht, wer was gelikt und geschrieben hat. |
 | **Änderungsverlauf** | Treffer und gelikte Wohnungen werden regelmäßig neu abgerufen. Jede Änderung (Kaufpreis, Hausgeld, Fläche, Energiedaten, Titel, Beschreibung, offline/wieder online …) wird mit Datum und Uhrzeit auf der Detailseite protokolliert, Preissenkungen grün, Erhöhungen rot. |
-| **Meldungen** | Telegram, ntfy (Push aufs Handy ohne Konto), E-Mail; Preissenkungen bei gemeldeten oder gelikten Wohnungen |
-| **Suchgebiet** | Auf der Seite „Suche“: Ort in ganz Deutschland anspringen, PLZ per Klick auf der Karte auswählen oder als PLZ/PLZ-Anfang eingeben (z. B. „904“), Flächen frei mit Maus oder Finger einzeichnen und/oder eine **Umkreissuche** anlegen (Ort per Adresse, PLZ oder Klick in die Karte, Radius 0,5–20 km per Schieberegler). Alles ist beliebig kombinierbar. Bei Umkreisen zeigt die Übersicht die Luftlinie zum Mittelpunkt und kann danach sortieren. Zusätzlich lassen sich Fernwärme-Gebiete einzeichnen: Steht im Inserat keine Heizung, liegt die Wohnung aber darin, wird das angezeigt. Nach jeder Änderung werden alle Inserate automatisch neu bewertet. |
+| **Meldungen** | Telegram (mit Knöpfen „Like“, „Ausblenden“, „Details“), ntfy (Push aufs Handy ohne Konto), E-Mail; Preissenkungen bei gemeldeten oder gelikten Wohnungen; Warnung, wenn ein Portal mehrere Läufe nichts liefert |
+| **Markt** | Preis pro m² je PLZ und Monat als Verlauf, Tabelle mit Kauf- und Mietpreisen und grober Bruttorendite. Liest FernImmo auch Mietinserate mit, rechnet der Kostenrechner mit echten Vergleichsmieten der PLZ. |
+| **Datensicherung** | Täglich automatisch (14 Tage aufbewahrt) und mit `python -m fernimmo backup` jederzeit |
+| **Suchgebiet** | Je Suche auf der Seite „Suchen“: Ort in ganz Deutschland anspringen, PLZ per Klick auf der Karte auswählen oder als PLZ/PLZ-Anfang eingeben (z. B. „904“), Flächen frei mit Maus oder Finger einzeichnen und/oder eine **Umkreissuche** anlegen (Ort per Adresse, PLZ oder Klick in die Karte, Radius 0,5–20 km per Schieberegler). Alles ist beliebig kombinierbar. Bei Umkreisen zeigt die Übersicht die Luftlinie zum Mittelpunkt und kann danach sortieren. Zusätzlich lassen sich Fernwärme-Gebiete einzeichnen: Steht im Inserat keine Heizung, liegt die Wohnung aber darin, wird das angezeigt. Nach jeder Änderung werden alle Inserate automatisch neu bewertet. |
 | **Karte** | Alle Inserate (mit den Filtern der Übersicht) auf einer OpenStreetMap-Karte, farbig nach Treffer, mit Suchgebiet und Infos per Klick. |
 | **Marktvergleich** | €/m² jeder Wohnung im Vergleich zum Median ihrer PLZ (ab 3 Vergleichsinseraten, sonst über alle). Die Vergleichsbasis sind die Inserate, die FernImmo im letzten Jahr gesammelt hat; sie wird also mit der Zeit besser. |
 | **Angebotsdauer** | Tage am Markt, Anzahl Preissenkungen und Preisänderung seit dem ersten Preis; Sortierung „am längsten online“. |
@@ -97,22 +101,74 @@ Topic kennt, kann mitlesen, deshalb einen schwer zu erratenden Namen wählen.
 Beim allerersten Lauf je Quelle gibt es nur eine Zusammenfassung statt dutzender
 Einzelmeldungen für den Altbestand. Das lässt sich mit `notify.first_run: true` ändern.
 
-## Suchprofil anpassen
+**Telegram-Knöpfe:** Unter jeder Meldung stehen „♡ Like“, „🙈 Ausblenden“, „Inserat ↗“
+und, wenn `web.public_url` gesetzt ist, „Details in FernImmo“. Dein Server muss dafür nicht
+aus dem Internet erreichbar sein: FernImmo fragt Telegram selbst nach Knopfdrücken. Likes
+aus Telegram werden dem ersten Web-Nutzer zugeordnet, oder per `telegram.users` je Person.
 
-Alles steht in `config.yaml` unter `profiles`. Mehrere Profile sind möglich, zum
-Beispiel eines für Miete und eines für Kauf. Wichtige Schalter:
+**Ausfall-Warnung:** Liefert ein Portal 3 Läufe in Folge nichts (gesperrt, Seitenaufbau
+geändert, Such-URL veraltet), kommt eine Warnung, und eine Entwarnung, sobald es wieder
+geht. Einstellbar mit `notify.alert_failed_runs`.
+
+## Android-App
+
+Die App zeigt die FernImmo-Weboberfläche in einer eigenen App an. Sie ist für den Zugriff
+über WireGuard aus dem Heimnetz gedacht: Server-Adresse und Login werden einmal
+eingegeben und gespeichert, Excel-/CSV-Exporte landen im Download-Ordner, Links zu den
+Portalen öffnen sich im normalen Browser.
+
+**Installieren:**
+1. Auf dem Handy die neueste APK öffnen:
+   `https://github.com/Dorum08/FernImmo/releases/latest/download/FernImmo.apk`
+   (bei GitHub angemeldet, da das Repo privat ist; alternativ die APK am PC laden und aufs Handy kopieren).
+2. Installation aus dieser Quelle erlauben (Android fragt einmalig nach).
+3. Beim ersten Start die Server-Adresse eintragen, z. B. `http://192.168.178.10:8080`,
+   dazu Benutzername und Passwort der Weboberfläche.
+
+Ändern lässt sich das später über „⚙ App“ oben in der Weboberfläche. Ist der Server nicht
+erreichbar, fragt die App, ob WireGuard verbunden ist.
+
+**Updates:** Bei jeder Änderung am Ordner `android/` baut GitHub automatisch eine neue
+APK und veröffentlicht sie als Release. Die neue Version einfach über die alte installieren.
+Alle Versionen sind mit demselben Schlüssel (`android/fernimmo-release.keystore`) signiert.
+Er liegt im privaten Repo, damit Updates ohne Einrichtung funktionieren. Wer einen eigenen
+Schlüssel möchte, legt ihn ab und setzt das Secret `FERNIMMO_KEYSTORE_PASSWORD`; danach die
+App einmal neu installieren.
+
+**Hinweis zu „Zum Startbildschirm hinzufügen“:** Auch ohne APK lässt sich die
+Weboberfläche im Browser auf den Startbildschirm legen; sie hat dafür ein Symbol. Als
+richtige Web-App mit eigenem Fenster verlangt Chrome allerdings HTTPS, was es über eine
+WireGuard-IP meist nicht gibt. Deshalb die APK.
+
+## Suchen
+
+Suchen legst du in der Weboberfläche unter **„Suchen“** an: „+ Neue Suche“ oder eine
+bestehende kopieren. Jede Suche hat:
+
+- **Kriterien:** Kauf und/oder Miete, Zimmer von/bis (in 0,5er-Schritten), Preis bis,
+  Fläche von/bis, Baujahr ab, Heizung (nur Fernwärme / Fern- oder Nahwärme / egal), was
+  bei fehlender Heizungsangabe passiert, Ausschlüsse (Gesuche, Zwangsversteigerungen,
+  Erbpacht, vermietet …) und eigene Ausschluss-Stichwörter
+- **Gebiet:** PLZ bzw. PLZ-Anfänge, frei gezeichnete Flächen und Umkreise. **Ohne Gebiet
+  sucht die Suche bundesweit.**
+- **Schalter:** aktiv (pausierte Suchen treffen nichts) und Benachrichtigungen (stumme
+  Suchen zeigen Treffer nur in der Übersicht)
+
+Fernwärme-Gebiete gelten für alle Suchen. Nach jeder Änderung werden alle gespeicherten
+Inserate sofort neu bewertet.
+
+Beim allerersten Start legt FernImmo die Suchen aus den `profiles` der `config.yaml` an
+(und übernimmt Gebiet und Kriterien der Vorversion). Danach ist die Weboberfläche
+maßgeblich. Die Schalter in `profiles` sind:
 
 - `listing_types: [kauf]`: nur Kaufangebote (`[miete]` oder `[miete, kauf]` geht auch; dann
   auch die Such-URLs der Portale entsprechend anpassen)
 - `rooms_min`, `rooms_max`: 1 bis 2 (mit `2.5` werden 2,5-Zimmer-Wohnungen eingeschlossen)
 - `price_max`: maximaler Kaufpreis
-
-  Zimmer, Kaufpreis und Mindestfläche lassen sich bequemer in der Weboberfläche unter
-  „Suche → Suchkriterien“ einstellen. Diese Werte gelten dann für alle Profile.
 - `heating_required: [fernwaerme]`: mit `[fernwaerme, nahwaerme]` zählt auch Nahwärme
 - `unknown_heating: teilweise`: Inserate ohne Heizungsangabe trotzdem melden (gelb). In der Praxis
   fehlt die Angabe oft, besonders bei Kleinanzeigen. Mit `ignorieren` bekommst du nur bestätigte Fernwärme.
-- `plz: ["904"]`: PLZ oder PLZ-Anfänge, solange kein Suchgebiet in der Weboberfläche festgelegt ist
+- `plz: ["904"]`: Gebiet der ersten Suche (PLZ oder PLZ-Anfänge)
 - `exclude_flags`: z. B. `[gesuch, versteigerung, erbpacht, vermietet]`; dazu `exclude_keywords`, `required_features`
 
 ## Lage und Karte

@@ -263,6 +263,14 @@
   };
   $("plz-none").onclick = () => { selected.clear(); refreshPlz(); savePlz(); };
   refreshPlz();
+  // Karte auf das Gebiet der Suche einpassen (PLZ + Flächen), sonst Startansicht
+  (async () => {
+    const b = L.latLngBounds([]);
+    const sel = await showSelection();
+    if (sel.getLayers().length) b.extend(sel.getBounds());
+    for (const l of Object.values(areaLayers)) if (l.getBounds) b.extend(l.getBounds());
+    if (b.isValid()) map.fitBounds(b, {padding: [20, 20], maxZoom: 13});
+  })();
 
   // --- Gezeichnete Flächen -------------------------------------------------
   function addAreaLayer(a) {

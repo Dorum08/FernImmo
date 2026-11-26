@@ -51,10 +51,14 @@
     {name: "Alle Inserate", data: all, color: css.getPropertyValue(plz && sel.length ? "--series-2" : "--series-1").trim()},
   ];
   const months = all.map(r => r.month);
-  const W = el.clientWidth || 700, H = 280, m = {l: 56, r: 110, t: 12, b: 28};
+  const W = el.clientWidth || 700, H = 280, m = {l: 64, r: W < 500 ? 12 : 170, t: 12, b: 28};
   const vals = series.flatMap(s => s.data.map(r => r.median));
+  // „Runde“ Achsenwerte: Schrittweite 1/2/5 × 10^n
   let lo = Math.min(...vals), hi = Math.max(...vals);
-  const pad = (hi - lo) * 0.15 || hi * 0.1; lo = Math.max(0, lo - pad); hi = hi + pad;
+  const raw = ((hi - lo) || hi * 0.2) / 4, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const tick = [1, 2, 5, 10].map(f => f * mag).find(t => t >= raw);
+  lo = Math.max(0, Math.floor(lo / tick) * tick - tick); hi = Math.ceil(hi / tick) * tick + (hi % tick ? 0 : tick);
+  const nTicks = Math.round((hi - lo) / tick);
   const x = i => m.l + (W - m.l - m.r) * (months.length === 1 ? 0.5 : i / (months.length - 1));
   const y = v => m.t + (H - m.t - m.b) * (1 - (v - lo) / (hi - lo));
   const fmt = v => Math.round(v).toLocaleString("de-DE") + " €";
@@ -64,22 +68,26 @@
   const add = (tag, attrs, text) => { const n = document.createElementNS(NS, tag);
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text != null) n.textContent = text; svg.appendChild(n); return n; };
   // Raster + y-Achse (zurückhaltend)
-  for (let i = 0; i <= 4; i++) {
-    const v = lo + (hi - lo) * i / 4, yy = y(v);
+  for (let i = 0; i <= nTicks; i++) {
+    const v = lo + tick * i, yy = y(v);
     add("line", {x1: m.l, x2: W - m.r, y1: yy, y2: yy, class: "grid"});
     add("text", {x: m.l - 8, y: yy + 4, "text-anchor": "end", class: "axis"}, fmt(v));
   }
   const step = Math.max(1, Math.ceil(months.length / 8));
   months.forEach((mo, i) => { if (i % step === 0 || i === months.length - 1)
     add("text", {x: x(i), y: H - 8, "text-anchor": "middle", class: "axis"}, mo.slice(5) + "/" + mo.slice(2, 4)); });
-  // Linien, Punkte, Endbeschriftung
+  // Linien, Punkte, Endbeschriftung (Beschriftungen mit mind. 16 px Abstand)
+  const used = [];
   for (const s of series) {
     const pts = s.data.map(r => [x(months.indexOf(r.month)), y(r.median)]);
     add("polyline", {points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: s.color, "stroke-width": 2,
                      "stroke-linejoin": "round", "stroke-linecap": "round"});
     for (const p of pts) add("circle", {cx: p[0], cy: p[1], r: 4, fill: s.color, class: "dot"});
     const last = pts[pts.length - 1], lr = s.data[s.data.length - 1];
-    add("text", {x: last[0] + 10, y: last[1] + 4, class: "label"}, `${s.name}: ${fmt(lr.median)}`);
+    let ly = last[1] + 4;
+    for (const u of used) if (Math.abs(u - ly) < 16) ly = u + (ly >= u ? 16 : -16);
+    used.push(ly);
+    if (W >= 500) add("text", {x: last[0] + 10, y: ly, class: "label"}, `${s.name}: ${fmt(lr.median)}`);
   }
   // Fadenkreuz + Tooltip
   const cross = add("line", {y1: m.t, y2: H - m.b, class: "cross", visibility: "hidden"});
