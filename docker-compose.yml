@@ -11,4 +11,4 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
     ports:
-      - "127.0.0.1:8080:8080"  # nur lokal; von außen über Reverse-Proxy/VPN/SSH-Tunnel
+      - "18451:8080"   # im ganzen Heimnetz unter http://<Server-IP>:18451 (Passwort in .env setzen!)

@@ -141,7 +141,7 @@ public class MainActivity extends Activity {
         box.setPadding(pad, pad / 2, pad, 0);
 
         EditText url = new EditText(this);
-        url.setHint("http://192.168.178.10:8080");
+        url.setHint("http://192.168.178.10:18451");
         url.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         url.setText(serverUrl());
         box.addView(url);

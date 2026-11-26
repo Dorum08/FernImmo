@@ -18,4 +18,4 @@ services:
       - /volume1/Docker/fernimmo/config.yaml:/app/config.yaml:ro
       - /volume1/Docker/fernimmo/data:/app/data
     ports:
-      - "8080:8080"   # links den Port am NAS ändern, falls 8080 schon belegt ist (z. B. "8090:8080")
+      - "18451:8080"  # im ganzen Heimnetz unter http://<NAS-IP>:18451 erreichbar (links ggf. anderen Port wählen)

@@ -47,11 +47,11 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Die Weboberfläche läuft dann auf `http://127.0.0.1:8080` auf dem Server. Sie ist
-absichtlich nur lokal gebunden. Von außen erreichst du sie per SSH-Tunnel
-(`ssh -L 8080:127.0.0.1:8080 dein-server`), VPN (z. B. WireGuard oder Tailscale)
-oder über einen Reverse-Proxy mit HTTPS (Caddy, nginx, Traefik). Setze in `.env`
-auf jeden Fall `WEB_PASSWORD`.
+Die Weboberfläche ist dann im ganzen Heimnetz unter `http://<Server-IP>:18451` erreichbar,
+von unterwegs über WireGuard. Setze in `.env` unbedingt `WEB_PASSWORD`. Ins Internet sollte
+der Port nicht freigegeben werden; dafür ist WireGuard da (oder ein Reverse-Proxy mit HTTPS).
+Soll die Seite nur auf dem Server selbst erreichbar sein, in `docker-compose.yml`
+`"127.0.0.1:18451:8080"` eintragen.
 
 **Mehrere Personen** (z. B. für gemeinsames Liken und Kommentieren): in `config.yaml`
 unter `web.users` weitere Namen eintragen, etwa `zweite_person: ${WEB_PASSWORD_2}`,
@@ -86,7 +86,7 @@ für Intel- und ARM-Modelle). Das NAS muss nichts selbst bauen.
 - Im ADM-Dateimanager den Ordner `Docker/fernimmo` anlegen (also `/volume1/Docker/fernimmo`), darin den
   Unterordner `data`. Gibt es keine Freigabe „Docker“, einen anderen Ort nehmen und die Pfade im Stack anpassen.
 - `config.example.yaml` aus dem Repo herunterladen, als `config.yaml` in diesen Ordner legen und anpassen
-  (Such-URLs, `web.public_url`, z. B. `http://192.168.178.20:8080`). Passwörter **nicht** hier eintragen,
+  (Such-URLs, `web.public_url`, z. B. `http://192.168.178.20:18451`). Passwörter **nicht** hier eintragen,
   die kommen als Umgebungsvariablen in Portainer.
 
 **3. Stack anlegen**
@@ -94,17 +94,17 @@ für Intel- und ARM-Modelle). Das NAS muss nichts selbst bauen.
 - Inhalt von `deploy/portainer-stack.yml` einfügen.
 - Unten bei **Environment variables** eintragen: `WEB_PASSWORD` (Pflicht), optional `TELEGRAM_ENABLED=true`,
   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
-- **Deploy the stack**. Danach im Browser `http://<NAS-IP>:8080` öffnen, Benutzer `ich` und dein Passwort.
+- **Deploy the stack**. Danach im Browser `http://<NAS-IP>:18451` öffnen, Benutzer `ich` und dein Passwort.
 
 **4. Updates**
 - Stacks → fernimmo → **Editor** → *Update the stack* mit **Re-pull image and redeploy**.
   Datenbank, Suchen und Likes liegen in `data/` und bleiben erhalten; Sicherungen in `data/backups/`.
 
 **Tipps**
-- Port 8080 belegt? Im Stack links den Port ändern, z. B. `"8090:8080"`, und `public_url` anpassen.
+- Port 18451 belegt? Im Stack links einen anderen Port wählen, z. B. `"18452:8080"`, und `public_url` anpassen.
 - Logs: Containers → fernimmo → *Logs*. Testnachricht: Containers → fernimmo → *Console* →
   `python -m fernimmo -c /app/config.yaml test-notify`.
-- Für die Android-App die Adresse `http://<NAS-IP>:8080` eintragen; das Handy erreicht sie über WireGuard.
+- Für die Android-App die Adresse `http://<NAS-IP>:18451` eintragen; das Handy erreicht sie über WireGuard.
 
 ## Ohne Docker
 
@@ -159,7 +159,7 @@ Portalen öffnen sich im normalen Browser.
    `https://github.com/Dorum08/FernImmo/releases/latest/download/FernImmo.apk`
    (bei GitHub angemeldet, da das Repo privat ist; alternativ die APK am PC laden und aufs Handy kopieren).
 2. Installation aus dieser Quelle erlauben (Android fragt einmalig nach).
-3. Beim ersten Start die Server-Adresse eintragen, z. B. `http://192.168.178.10:8080`,
+3. Beim ersten Start die Server-Adresse eintragen, z. B. `http://192.168.178.10:18451`,
    dazu Benutzername und Passwort der Weboberfläche.
 
 Ändern lässt sich das später über „⚙ App“ oben in der Weboberfläche. Ist der Server nicht

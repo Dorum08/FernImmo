@@ -179,7 +179,7 @@ notify:
 
 web:
   host: 0.0.0.0
-  port: 8080
+  port: 8080                  # Port im Container; nach außen gilt der Port aus docker-compose (18451)
   # Nutzer für Login, Likes und Kommentare (Name: Passwort). Nutzer ohne
   # Passwort werden ignoriert; sind alle leer, gibt es keinen Login
   # (dann nur hinter VPN/Reverse-Proxy betreiben!).
@@ -188,7 +188,7 @@ web:
     # zweite_person: ${WEB_PASSWORD_2}
   # Adresse, unter der du FernImmo vom Handy aus erreichst (z. B. über WireGuard).
   # Wird für den „Details“-Knopf in Telegram genutzt.
-  # public_url: http://192.168.178.10:8080
+  # public_url: http://192.168.178.10:18451
 
 # Tägliche Datensicherung der Datenbank (Likes, Kommentare, Verlauf, Suchen)
 backup:
