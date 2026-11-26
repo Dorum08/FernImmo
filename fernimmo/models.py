@@ -17,6 +17,9 @@ class RawListing:
     address: str = ""
     listing_type: str | None = None  # "miete" | "kauf"
     image_url: str | None = None
+    lat: float | None = None
+    lon: float | None = None
+    geo_precision: str | None = None  # portal | adresse | plz
 
 
 @dataclass

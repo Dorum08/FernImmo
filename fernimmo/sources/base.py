@@ -157,6 +157,11 @@ class Source:
     def fetch_detail(self, hit: SearchHit) -> RawListing:
         html = self.fetcher.get(hit.url)
         raw = self.parse_detail(html, hit)
+        if raw.lat is None:
+            from ..geo import coords_from_html
+            c = coords_from_html(html)
+            if c:
+                raw.lat, raw.lon, raw.geo_precision = c[0], c[1], "portal"
         if not raw.listing_type:
             raw.listing_type = hit.listing_type or guess_type(raw.title + " " + raw.text[:500])
         return raw

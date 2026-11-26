@@ -61,6 +61,29 @@ sources:
   #   type_default: kauf
 
 # ---------------------------------------------------------------------------
+# Lage: Koordinaten liefern die Portale teils selbst; sonst wird die Adresse über
+# OpenStreetMap (Nominatim) in Koordinaten umgerechnet – höchstens 1 Anfrage/s,
+# Ergebnisse werden gespeichert. Ohne Straße wird der PLZ-Mittelpunkt genommen.
+# Das Suchgebiet (PLZ-Auswahl, Freihand-Flächen) legst du in der Weboberfläche
+# unter "Suchgebiet" fest; es ersetzt dann die plz-Angabe der Profile.
+# ---------------------------------------------------------------------------
+geocoding:
+  enabled: true
+  # email: deine@adresse.de   # optional, empfohlen von der Nominatim-Nutzungsrichtlinie
+map_center: [49.4521, 11.0767]   # Nürnberg
+
+# Vorgaben für den Kostenrechner (auf der Detailseite im Browser änderbar)
+calculator:
+  grunderwerbsteuer_pct: 3.5     # Bayern
+  notar_grundbuch_pct: 2.0
+  makler_pct: 3.57               # Käuferanteil; bei "provisionsfrei" automatisch 0
+  eigenkapital: 60000
+  zins_pct: 3.6
+  tilgung_pct: 2.0
+  miete_pro_qm: 12.0             # Vergleichsmiete für die Rendite – bitte an Mietspiegel/Lage anpassen
+  hausgeld_nicht_umlagefaehig_pct: 35
+
+# ---------------------------------------------------------------------------
 # Suchprofile. "voll" = alles erfüllt und Fernwärme bestätigt,
 # "teilweise" = nichts spricht dagegen, aber z.B. Heizung nicht angegeben.
 # ---------------------------------------------------------------------------
@@ -73,7 +96,7 @@ profiles:
     # price_max: 250000          # max. Kaufpreis in €
     heating_required: [fernwaerme]
     unknown_heating: teilweise   # teilweise = trotzdem melden (gelb) | ignorieren
-    plz: ["90"]                  # Nürnberg: 904xx; ["904"] für nur Stadtgebiet
+    plz: ["90"]                  # nur solange kein Suchgebiet in der Weboberfläche festgelegt ist
     exclude_flags: [gesuch, versteigerung]
     # weitere Ausschlüsse: erbpacht, vermietet (= Kapitalanlage mit Mieter), denkmal,
     #                      wbs, senioren, tausch, wg, befristet

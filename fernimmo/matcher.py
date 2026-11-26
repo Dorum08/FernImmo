@@ -53,7 +53,9 @@ def _range_ok(value, lo, hi) -> bool | None:
     return True
 
 
-def match(profile: Profile, listing_type: str | None, data: dict[str, Any], text: str) -> MatchResult:
+def match(profile: Profile, listing_type: str | None, data: dict[str, Any], text: str,
+          area=None) -> MatchResult:
+    """area: optionales geo.AreaFilter (Suchgebiet aus der Weboberfläche); ersetzt profile.plz."""
     reasons: list[str] = []
     unknown = False
 
@@ -88,7 +90,14 @@ def match(profile: Profile, listing_type: str | None, data: dict[str, Any], text
             unknown = True
             reasons.append(f"{label} unbekannt")
 
-    if profile.plz:
+    if area is not None and area.active:
+        inside = area.check(data)
+        if inside is False:
+            return MatchResult("none", ["außerhalb des Suchgebiets"])
+        if inside is None:
+            unknown = True
+            reasons.append("Lage unklar (nur PLZ/ohne Adresse bekannt)")
+    elif profile.plz:
         plz = data.get("plz")
         if plz is None:
             unknown = True
@@ -111,18 +120,19 @@ def match(profile: Profile, listing_type: str | None, data: dict[str, Any], text
             if profile.unknown_heating == "ignorieren":
                 return MatchResult("none", ["Heizung unbekannt"])
             unknown = True
-            reasons.append("Heizung unklar" + (f" (Freitext: {', '.join(sorted(sources))})" if sources else ""))
+            reasons.append("Heizung unklar" + (f" (Freitext: {', '.join(sorted(sources))})" if sources else "")
+                           + (" – liegt aber im eingezeichneten Fernwärme-Gebiet" if data.get("fw_zone") else ""))
 
     return MatchResult("teilweise" if unknown else "voll", reasons)
 
 
-def best_match(profiles: list[Profile], listing_type, data, text) -> tuple[str, list[str], list[str]]:
+def best_match(profiles: list[Profile], listing_type, data, text, area=None) -> tuple[str, list[str], list[str]]:
     """Liefert (beste Stufe, passende Profilnamen, Gründe des besten Profils)."""
     best = "none"
     names: list[str] = []
     best_reasons: list[str] = []
     for p in profiles:
-        r = match(p, listing_type, data, text)
+        r = match(p, listing_type, data, text, area)
         if r.level != "none":
             names.append(p.name)
         if LEVELS[r.level] > LEVELS[best] or (not best_reasons and r.level == best):

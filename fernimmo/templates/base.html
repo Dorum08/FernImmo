@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}FernImmo{% endblock %}</title>
+{% block head %}{% endblock %}
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#677084;--line:#e3e6ec;--accent:#c2410c;--ok:#15803d;--warn:#b45309;--bad:#b91c1c}
 @media (prefers-color-scheme:dark){:root{--bg:#12151b;--card:#1b2029;--fg:#e6e9ef;--muted:#9aa3b5;--line:#2a313d;--accent:#fb923c;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}}
@@ -40,17 +41,39 @@ button.link{border:0;background:none;padding:0;color:var(--muted);text-decoratio
 .changes .ch-offline td,.changes .ch-online td{font-style:italic}
 .desc-diff{display:grid;grid-template-columns:1fr 1fr;gap:12px}.desc-diff pre{max-height:300px;overflow:auto;background:var(--bg);padding:8px;border-radius:6px}
 .liked-count{color:#e11d48}
+.map-big{height:calc(100vh - 260px);min-height:420px;border-radius:10px;border:1px solid var(--line);z-index:0}
+.map-small{height:260px;border-radius:8px;border:1px solid var(--line);z-index:0}
+.drawing,.drawing .leaflet-interactive{cursor:crosshair!important;touch-action:none}
+.area-layout{display:grid;grid-template-columns:1fr 320px;gap:14px;align-items:start}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+button.active{outline:3px solid var(--accent);outline-offset:1px}
+.plz-list{display:flex;flex-wrap:wrap;gap:4px;max-height:300px;overflow:auto}
+.plz-chip{flex-direction:row;align-items:center;gap:3px;border:1px solid var(--line);border-radius:6px;padding:2px 6px;font-size:13px;color:var(--fg);cursor:pointer}
+.plz-chip.on{background:color-mix(in srgb,#2563eb 15%,transparent);border-color:#2563eb}
+.plz-tools{display:flex;gap:6px;margin-bottom:8px}.small-btn{font-size:12px;padding:3px 8px}
+.area-list{list-style:none;padding:0;margin:0;display:grid;gap:8px}.area-list li{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}
+.area-name{font-weight:600}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle}
+.dot.ring{border:3px solid #d97706;background:#fff;width:8px;height:8px}
+.sq{display:inline-block;width:12px;height:10px;border:2px solid;vertical-align:middle}.sq.dashed{border-style:dashed}
+.legend{display:flex;gap:6px 14px;flex-wrap:wrap;margin:0 0 8px}
+.mkt-good{color:var(--ok)}.mkt-bad{color:var(--bad)}
+.kpis{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:13px;margin-top:4px;color:var(--muted)}
+.calc{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+.calc label input{width:100%}.calc-out{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:12px}
+.calc-out div{background:var(--bg);border-radius:8px;padding:8px}.calc-out b{display:block;font-size:18px}
+.export{display:flex;gap:10px;align-items:center;margin:-4px 0 10px;font-size:13px}
 @media (max-width:640px){.item{grid-template-columns:1fr}.item img{width:100%;height:160px}.item-side{flex-direction:row;flex-wrap:wrap;align-items:center}.desc-diff{grid-template-columns:1fr}
 .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.stats .card{min-width:0;padding:6px;text-align:center}
 .stats .card span{font-size:10px;display:block;line-height:1.2}.stats b{font-size:18px}
 form.filters label{flex:1 1 45%}form.filters select,form.filters input[name=q]{width:100%}
-header{gap:8px 12px}}
+header{gap:8px 12px}.area-layout{grid-template-columns:1fr}.map-big{height:60vh}}
 </style>
 </head>
 <body>
 <header>
   <a class="logo" href="/">🏠 FernImmo</a>
-  <nav><a href="/">Inserate</a><a href="/runs">Suchläufe</a></nav>
+  <nav><a href="/">Inserate</a><a href="/karte">Karte</a><a href="/gebiet">Suchgebiet</a><a href="/runs">Suchläufe</a></nav>
   {% if user %}<span class="muted small">angemeldet als <b>{{ user }}</b></span>{% endif %}
   <form method="post" action="/run"><button class="primary">Jetzt suchen</button></form>
 </header>

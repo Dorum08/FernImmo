@@ -10,6 +10,18 @@ import yaml
 
 from .matcher import Profile
 
+# Vorgaben für den Kostenrechner (in config.yaml unter "calculator" änderbar)
+CALC_DEFAULTS = {
+    "grunderwerbsteuer_pct": 3.5,     # Bayern
+    "notar_grundbuch_pct": 2.0,
+    "makler_pct": 3.57,               # Käuferanteil inkl. MwSt.; 0 bei "provisionsfrei"
+    "eigenkapital": 60000,
+    "zins_pct": 3.6,
+    "tilgung_pct": 2.0,
+    "miete_pro_qm": 12.0,             # Vergleichsmiete für die Renditeschätzung – bitte anpassen
+    "hausgeld_nicht_umlagefaehig_pct": 35,
+}
+
 _ENV = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}")
 
 
@@ -63,6 +75,12 @@ class Config:
             users.setdefault(w.get("username", "admin"), w["password"])
         self.web_users: dict[str, str] = {u: str(p) for u, p in users.items() if p}
         self.timezone: str = raw.get("timezone", "Europe/Berlin")
+        g = raw.get("geocoding") or {}
+        if "enabled" in g:
+            g["enabled"] = _bool(g["enabled"])
+        self.geocoding: dict[str, Any] = g
+        self.map_center: list[float] = raw.get("map_center", [49.4521, 11.0767])
+        self.calculator: dict[str, Any] = {**CALC_DEFAULTS, **(raw.get("calculator") or {})}
 
     @classmethod
     def load(cls, path: str | Path) -> "Config":

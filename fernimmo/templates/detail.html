@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% from "_social.html" import social %}
 {% block title %}#{{ l.id }} {{ l.title }} – FernImmo{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/leaflet/leaflet.css">
+<script src="/static/leaflet/leaflet.js"></script>
+<script src="/static/fernimmo-map.js"></script>
+{% endblock %}
 {% block content %}{% set d = l.data %}
 <p><a href="/">← zurück</a></p>
 <div class="card" id="l{{ l.id }}">
@@ -22,16 +27,112 @@
   {{ social(l, user, here, open=True) }}
 </div>
 
+<div class="card" style="margin-top:12px">
+  <h3 style="margin-top:0">Marktlage</h3>
+  <div class="calc-out" style="margin-top:0">
+    <div><span class="muted small">Preis pro m²</span><b>{{ d.price_per_sqm|num(" €") }}</b></div>
+    <div><span class="muted small">Vergleich zum Markt</span>
+      {% if l.market %}<b class="{{ 'mkt-good' if l.market.dev < 0 else 'mkt-bad' if l.market.dev > 5 else '' }}">{{ "%+d"|format(l.market.dev) }} %</b>
+      <span class="small muted">Median {{ l.market.label }}: {{ l.market.median|num(" €/m²") }}, {{ l.market.n }} Inserate</span>
+      {% else %}<b>–</b><span class="small muted">noch zu wenige Vergleichsinserate</span>{% endif %}</div>
+    <div><span class="muted small">Am Markt</span><b>{{ l.days_online }} Tage</b>
+      <span class="small muted">{% if l.predecessors %}inkl. {{ l.predecessors|length }} früherem Inserat{{ "en" if l.predecessors|length > 1 }}{% else %}seit {{ l.first_seen|dt("%d.%m.%Y") }}{% endif %}</span></div>
+    <div><span class="muted small">Preisentwicklung</span>
+      <b class="{{ 'mkt-good' if (l.price_delta_pct or 0) < 0 else 'mkt-bad' if (l.price_delta_pct or 0) > 0 }}">{{ "%+.1f %%"|format(l.price_delta_pct) if l.price_delta_pct else "unverändert" }}</b>
+      <span class="small muted">{{ l.price_drops }}× gesenkt, {{ l.price_raises }}× erhöht{% if l.first_price %} · Start {{ l.first_price|num(" €") }}{% endif %}</span></div>
+  </div>
+  {% if l.predecessors %}<p class="small">♻️ Diese Wohnung war schon früher inseriert:
+    {% for p in l.predecessors %}<a href="/listing/{{ p }}">#{{ p }}</a>{{ ", " if not loop.last }}{% endfor %}.
+    Der Verlauf unten enthält auch deren Änderungen.</p>{% endif %}
+  {% if l.lat is not none %}
+  <div id="minimap" class="map-small" style="margin-top:10px"></div>
+  <p class="small muted">Lage {{ {"portal": "laut Portal", "adresse": "aus der Adresse ermittelt", "plz": "nur PLZ-genau (Mittelpunkt)"}[l.geo_precision] }}{% if d.fw_zone %} · liegt in einem eingezeichneten Fernwärme-Gebiet{% endif %}</p>
+  <script>
+  (async () => {
+    const map = FI.map("minimap", [{{ l.lat }}, {{ l.lon }}], {{ 15 if l.geo_precision != "plz" else 13 }});
+    (await FI.json("/api/areas")).areas.forEach(a => FI.areaLayer(a, {interactive: false}).addTo(map));
+    {% if l.geo_precision == "plz" %}
+    const plz = await FI.plz();
+    L.geoJSON(plz, {filter: f => f.properties.plz === {{ d.plz|tojson }}, style: {color: "#d97706", weight: 2, fillOpacity: 0.1}}).addTo(map);
+    {% else %}
+    L.circleMarker([{{ l.lat }}, {{ l.lon }}], {radius: 9, color: "#fff", weight: 2, fillColor: FI.colors[{{ l.match_level|tojson }}], fillOpacity: 1}).addTo(map);
+    {% endif %}
+  })();
+  </script>
+  {% endif %}
+</div>
+
+{% if l.listing_type == "kauf" and l.price %}
+<div class="card" style="margin-top:12px" id="rechner">
+  <h3 style="margin-top:0">Kostenrechner</h3>
+  <p class="small muted">Eigene Werte werden in diesem Browser gespeichert und für alle Wohnungen übernommen.
+    Kaufpreis, Hausgeld und Fläche kommen aus dem Inserat und lassen sich hier zum Durchspielen ändern.</p>
+  <form class="calc" id="calc" onsubmit="return false">
+    <label>Kaufpreis €<input type="number" step="1000" name="price" value="{{ l.price|int }}" data-fixed></label>
+    <label>Wohnfläche m²<input type="number" step="0.1" name="area" value="{{ d.area or '' }}" data-fixed></label>
+    <label>Hausgeld €/Monat<input type="number" step="10" name="hausgeld" value="{{ (d.hausgeld or 0)|int }}" data-fixed></label>
+    <label>Maklerprovision %<input type="number" step="0.01" name="makler_pct" value="{{ 0 if 'provisionsfrei' in d.flags else calc_defaults.makler_pct }}" {% if 'provisionsfrei' in d.flags %}data-fixed{% endif %}></label>
+    <label>Grunderwerbsteuer %<input type="number" step="0.1" name="grunderwerbsteuer_pct" value="{{ calc_defaults.grunderwerbsteuer_pct }}"></label>
+    <label>Notar + Grundbuch %<input type="number" step="0.1" name="notar_grundbuch_pct" value="{{ calc_defaults.notar_grundbuch_pct }}"></label>
+    <label>Eigenkapital €<input type="number" step="1000" name="eigenkapital" value="{{ calc_defaults.eigenkapital }}"></label>
+    <label>Sollzins % p.a.<input type="number" step="0.05" name="zins_pct" value="{{ calc_defaults.zins_pct }}"></label>
+    <label>Anfängl. Tilgung %<input type="number" step="0.1" name="tilgung_pct" value="{{ calc_defaults.tilgung_pct }}"></label>
+    <label>Vergleichsmiete €/m²<input type="number" step="0.1" name="miete_pro_qm" value="{{ calc_defaults.miete_pro_qm }}"></label>
+    <label>Hausgeld nicht umlagefähig %<input type="number" step="1" name="hausgeld_nicht_umlagefaehig_pct" value="{{ calc_defaults.hausgeld_nicht_umlagefaehig_pct }}"></label>
+  </form>
+  <div class="calc-out" id="calc-out"></div>
+  <p class="small muted">Annuitätendarlehen mit anfänglicher Tilgung; Rendite mit geschätzter Miete (Fläche × Vergleichsmiete).
+    Nur eine Orientierung, keine Finanzierungsberatung.</p>
+  <script>
+  (() => {
+    const form = document.getElementById("calc"), out = document.getElementById("calc-out");
+    const KEY = "fernimmo-calc";
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) {}
+    for (const inp of form.elements) if (!inp.hasAttribute("data-fixed") && saved[inp.name] != null) inp.value = saved[inp.name];
+    const eur = v => Math.round(v).toLocaleString("de-DE") + " €";
+    const pct = v => v.toLocaleString("de-DE", {maximumFractionDigits: 2}) + " %";
+    function calc() {
+      const v = {};
+      for (const inp of form.elements) v[inp.name] = parseFloat(inp.value) || 0;
+      const nkPct = v.grunderwerbsteuer_pct + v.notar_grundbuch_pct + v.makler_pct;
+      const nk = v.price * nkPct / 100, total = v.price + nk;
+      const loan = Math.max(0, total - v.eigenkapital);
+      const rate = loan * (v.zins_pct + v.tilgung_pct) / 100 / 12;
+      const rent = v.area * v.miete_pro_qm * 12;
+      const netRent = rent - v.hausgeld * 12 * v.hausgeld_nicht_umlagefaehig_pct / 100;
+      const box = (t, val, sub) => `<div><span class="muted small">${t}</span><b>${val}</b>${sub ? `<span class="small muted">${sub}</span>` : ""}</div>`;
+      out.innerHTML =
+        box("Kaufnebenkosten", eur(nk), pct(nkPct) + " vom Kaufpreis") +
+        box("Gesamtkosten", eur(total)) +
+        box("Darlehen", eur(loan), v.eigenkapital ? "nach " + eur(v.eigenkapital) + " Eigenkapital" : "") +
+        box("Monatsrate", eur(rate), "Zins + Tilgung") +
+        box("Monatliche Belastung", eur(rate + v.hausgeld), "Rate + Hausgeld") +
+        (rent ? box("Bruttomietrendite", pct(rent / v.price * 100), "Miete ≈ " + eur(rent / 12) + "/Monat") +
+                box("Kaufpreisfaktor", (v.price / rent).toLocaleString("de-DE", {maximumFractionDigits: 1}), "Jahresmieten") +
+                box("Nettomietrendite", pct(netRent / total * 100), "nach Kosten, auf Gesamtkosten") : "");
+      const keep = {};
+      for (const inp of form.elements) if (!inp.hasAttribute("data-fixed")) keep[inp.name] = inp.value;
+      try { localStorage.setItem(KEY, JSON.stringify(keep)); } catch (e) {}
+    }
+    form.addEventListener("input", calc);
+    calc();
+  })();
+  </script>
+</div>
+{% endif %}
+
 <div class="card" style="margin-top:12px" id="verlauf">
   <h3 style="margin-top:0">Änderungsverlauf</h3>
   <p class="muted small">Erfasst bei jedem erneuten Abruf des Inserats (Treffer und gelikte Inserate werden regelmäßig neu geladen).
     Zuletzt abgerufen: {{ l.last_fetched|dt or "–" }}.</p>
   <div class="table-wrap">
   <table class="changes">
-    <tr><th>Datum / Uhrzeit</th><th>Merkmal</th><th>Vorher</th><th>Nachher</th></tr>
+    <tr><th>Datum / Uhrzeit</th>{% if l.predecessors %}<th>Inserat</th>{% endif %}<th>Merkmal</th><th>Vorher</th><th>Nachher</th></tr>
     {% for c in changes %}
     <tr class="ch-{{ c.direction or c.field }}">
       <td style="white-space:nowrap">{{ c.ts|dt }}</td>
+      {% if l.predecessors %}<td>{% if c.listing_id != l.id %}<a href="/listing/{{ c.listing_id }}">#{{ c.listing_id }}</a>{% else %}#{{ l.id }}{% endif %}</td>{% endif %}
       <td>{% if c.direction == "down" %}📉 {% elif c.direction == "up" %}📈 {% endif %}{{ c.label }}</td>
       {% if c.field == "raw_text" %}
       <td colspan="2"><details><summary>Beschreibung geändert – anzeigen</summary>

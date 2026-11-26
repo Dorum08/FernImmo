@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Suchgebiet – FernImmo{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/leaflet/leaflet.css">
+<script src="/static/leaflet/leaflet.js"></script>
+<script src="/static/fernimmo-map.js"></script>
+{% endblock %}
+{% block content %}
+<h2 style="margin-top:0">Suchgebiet</h2>
+<p class="muted">Eine Wohnung zählt als „im Gebiet“, wenn ihre PLZ ausgewählt ist <b>oder</b> sie in einer
+gezeichneten Fläche liegt. Ist nur die PLZ bekannt und das PLZ-Gebiet überschneidet eine Fläche, gilt die Lage
+als unklar (möglicher Treffer). Ohne Auswahl gilt die PLZ-Einstellung aus <code>config.yaml</code>.</p>
+<div id="status" class="card small" {% if not reprocessing %}hidden{% endif %}>⏳ Inserate werden neu bewertet …</div>
+
+<div class="area-layout">
+  <div>
+    <div class="toolbar">
+      <button id="draw-search" class="primary">✏️ Suchgebiet zeichnen</button>
+      <button id="draw-fw">🔥 Fernwärme-Gebiet zeichnen</button>
+      <span id="hint" class="muted small">PLZ-Gebiete anklicken zum Auswählen.</span>
+    </div>
+    <div id="map" class="map-big"></div>
+    <p class="muted small">PLZ-Grenzen: © OpenStreetMap-Mitwirkende (ODbL), Stand Februar 2026.</p>
+  </div>
+  <aside>
+    <div class="card">
+      <h3 style="margin-top:0">Ausgewählte PLZ <span id="plz-count" class="badge"></span></h3>
+      <div class="plz-tools">
+        <button type="button" id="plz-nbg" class="small-btn">Stadt Nürnberg (904xx)</button>
+        <button type="button" id="plz-none" class="small-btn">keine</button>
+      </div>
+      <div id="plz-list" class="plz-list">
+        {% for p in plz_list %}<label class="plz-chip"><input type="checkbox" value="{{ p }}"> {{ p }}</label>{% endfor %}
+      </div>
+      <label class="small muted" style="margin-top:8px">Weitere PLZ (kommagetrennt, außerhalb der Karte)
+        <input id="plz-extra" placeholder="z.B. 91301"></label>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <h3 style="margin-top:0">Gezeichnete Flächen</h3>
+      <ul id="area-list" class="area-list"></ul>
+      <p class="muted small">Fernwärme-Gebiete (rot) sind nur ein Hinweis: Steht im Inserat keine Heizung, wird
+        „liegt im Fernwärme-Gebiet“ angezeigt. Die Netzkarte gibt es beim Versorger (N-ERGIE).</p>
+    </div>
+  </aside>
+</div>
+
+<script>
+(async () => {
+  const map = FI.map("map", {{ center|tojson }}, 11);
+  window.FI_MAP = map;
+  const state = await FI.json("/api/areas");
+  let selected = new Set(state.plz);
+  const known = new Set();
+  const plzLayers = {};
+  const areaLayers = {};
+  const $ = id => document.getElementById(id);
+
+  // --- PLZ-Gebiete ---------------------------------------------------------
+  const plz = await FI.plz();
+  const styleFor = p => selected.has(p)
+    ? {color: FI.colors.plzSel, weight: 2, fillColor: FI.colors.plzSel, fillOpacity: 0.28}
+    : {color: "#64748b", weight: 1, fillOpacity: 0.03};
+  const plzGroup = L.geoJSON(plz, {
+    style: f => styleFor(f.properties.plz),
+    onEachFeature: (f, layer) => {
+      const p = f.properties.plz;
+      known.add(p);
+      plzLayers[p] = layer;
+      layer.bindTooltip(p, {sticky: true});
+      layer.on("click", () => { if (!drawing) togglePlz(p); });
+    },
+  }).addTo(map);
+  map.fitBounds(plzGroup.getBounds(), {padding: [10, 10]});
+
+  const checkboxes = [...document.querySelectorAll("#plz-list input")];
+  function refreshPlz() {
+    for (const [p, layer] of Object.entries(plzLayers)) layer.setStyle(styleFor(p));
+    checkboxes.forEach(c => { c.checked = selected.has(c.value); c.parentElement.classList.toggle("on", c.checked); });
+    $("plz-extra").value = [...selected].filter(p => !known.has(p)).join(", ");
+    $("plz-count").textContent = selected.size;
+  }
+  let saveTimer;
+  function savePlz() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      const r = await FI.json("/api/search-plz", {method: "PUT", body: JSON.stringify({plz: [...selected]})});
+      selected = new Set(r.plz);
+      refreshPlz();
+      busy();
+    }, 600);
+  }
+  function togglePlz(p) { selected.has(p) ? selected.delete(p) : selected.add(p); refreshPlz(); savePlz(); }
+  checkboxes.forEach(c => c.addEventListener("change", () => togglePlz(c.value)));
+  $("plz-extra").addEventListener("change", e => {
+    [...selected].filter(p => !known.has(p)).forEach(p => selected.delete(p));
+    e.target.value.split(/[,\s;]+/).filter(p => /^\d{5}$/.test(p)).forEach(p => selected.add(p));
+    refreshPlz(); savePlz();
+  });
+  $("plz-nbg").onclick = () => { [...known].filter(p => p.startsWith("904")).forEach(p => selected.add(p)); refreshPlz(); savePlz(); };
+  $("plz-none").onclick = () => { selected.clear(); refreshPlz(); savePlz(); };
+  refreshPlz();
+
+  // --- Gezeichnete Flächen -------------------------------------------------
+  function addAreaLayer(a) {
+    const layer = FI.areaLayer(a).addTo(map);
+    layer.bindTooltip(FI.esc(a.name));
+    areaLayers[a.id] = layer;
+  }
+  function renderList(areas) {
+    $("area-list").innerHTML = areas.length ? "" : '<li class="muted small">Noch keine – oben „zeichnen“ wählen.</li>';
+    for (const a of areas) {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="dot" style="background:${a.kind === "fw" ? FI.colors.fw : FI.colors.search}"></span>
+        <span class="area-name">${FI.esc(a.name)}</span>
+        <span class="muted small">${a.kind === "fw" ? "Fernwärme" : "Suchgebiet"} · ${FI.esc(a.created_by || "")}</span>
+        <button class="link" data-act="zoom">zeigen</button>
+        <button class="link" data-act="rename">umbenennen</button>
+        <button class="link" data-act="del">löschen</button>`;
+      li.querySelector('[data-act="zoom"]').onclick = () => map.fitBounds(areaLayers[a.id].getBounds());
+      li.querySelector('[data-act="rename"]').onclick = async () => {
+        const n = prompt("Neuer Name:", a.name);
+        if (n) { await FI.json(`/api/areas/${a.id}`, {method: "PATCH", body: JSON.stringify({name: n})}); a.name = n; renderList(areas); }
+      };
+      li.querySelector('[data-act="del"]').onclick = async () => {
+        if (!confirm(`„${a.name}“ löschen?`)) return;
+        await FI.json(`/api/areas/${a.id}`, {method: "DELETE"});
+        map.removeLayer(areaLayers[a.id]);
+        areas.splice(areas.indexOf(a), 1);
+        renderList(areas);
+        busy();
+      };
+      $("area-list").appendChild(li);
+    }
+  }
+  const areas = state.areas;
+  areas.forEach(addAreaLayer);
+  renderList(areas);
+
+  let drawing = null;
+  function startDraw(kind) {
+    if (drawing) { drawing(); drawing = null; resetHint(); return; }
+    $("hint").textContent = "Maustaste/Finger gedrückt halten und das Gebiet umfahren. Esc bricht ab.";
+    $("draw-" + kind).classList.add("active");
+    drawing = FI.freehand(map, kind === "fw" ? FI.colors.fw : FI.colors.search, async geometry => {
+      drawing = null; resetHint();
+      const name = prompt(kind === "fw" ? "Name des Fernwärme-Gebiets:" : "Name des Suchgebiets:",
+                          kind === "fw" ? "Fernwärme" : "Suchgebiet " + (areas.filter(a => a.kind === kind).length + 1));
+      if (name === null) return;
+      const r = await FI.json("/api/areas", {method: "POST", body: JSON.stringify({kind, name, geometry})});
+      const a = {id: r.id, kind, name, geometry, created_by: {{ user|tojson }}};
+      areas.push(a); addAreaLayer(a); renderList(areas); busy();
+    }, () => { drawing = null; resetHint(); });
+  }
+  function resetHint() {
+    $("hint").textContent = "PLZ-Gebiete anklicken zum Auswählen.";
+    document.querySelectorAll(".toolbar button").forEach(b => b.classList.remove("active"));
+  }
+  $("draw-search").onclick = () => startDraw("search");
+  $("draw-fw").onclick = () => startDraw("fw");
+
+  // --- Hinweis während der Neubewertung ------------------------------------
+  async function busy() {
+    $("status").hidden = false;
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      if (!(await FI.json("/api/areas")).reprocessing) break;
+    }
+    $("status").textContent = "✅ Inserate neu bewertet.";
+    setTimeout(() => { $("status").hidden = true; $("status").textContent = "⏳ Inserate werden neu bewertet …"; }, 2500);
+  }
+})();
+</script>
+{% endblock %}

@@ -84,10 +84,31 @@ CREATE TABLE IF NOT EXISTS runs (
     matches INTEGER DEFAULT 0,
     error TEXT
 );
+CREATE TABLE IF NOT EXISTS areas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,          -- 'search' (Suchgebiet) | 'fw' (Fernwärme-Gebiet)
+    name TEXT,
+    geometry TEXT NOT NULL,      -- GeoJSON Polygon/MultiPolygon
+    created TEXT,
+    created_by TEXT
+);
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+CREATE TABLE IF NOT EXISTS geocache (
+    query TEXT PRIMARY KEY,
+    lat REAL,
+    lon REAL,
+    ts TEXT
+);
 """
 
 # Spalten, die nachträglich dazugekommen sind (Migration bestehender Datenbanken)
-MIGRATIONS = {"listings": {"last_fetched": "TEXT"}}
+MIGRATIONS = {"listings": {
+    "last_fetched": "TEXT", "lat": "REAL", "lon": "REAL", "geo_precision": "TEXT",
+    "loose_fp": "TEXT", "relisted_of": "INTEGER",
+}}
 
 # Merkmale, deren Änderung im Verlauf protokolliert wird: Schlüssel -> (Bezeichnung, Einheit)
 TRACKED_DATA = {
@@ -120,6 +141,21 @@ def fingerprint(data: dict[str, Any], price: float | None) -> str | None:
     if not data.get("area") or not price:
         return None
     return f"{data.get('plz') or '?'}|{round(data['area'])}|{round(price / 10) * 10}|{data.get('rooms') or '?'}"
+
+
+def loose_fingerprint(data: dict[str, Any]) -> str | None:
+    """Fingerabdruck ohne Preis – erkennt dieselbe Wohnung nach Löschen und Neueinstellen."""
+    if not data.get("area") or not data.get("plz"):
+        return None
+    return f"{data['plz']}|{round(data['area'])}|{data.get('rooms') or '?'}"
+
+
+def median(values: list[float]) -> float | None:
+    v = sorted(values)
+    if not v:
+        return None
+    mid = len(v) // 2
+    return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2
 
 
 def _fmt(value: Any, unit: str = "") -> str | None:
@@ -244,6 +280,8 @@ class DB:
             plz=l.data.get("plz"), fingerprint=fp, match_level=l.match_level,
             matched_profiles=json.dumps(l.matched_profiles, ensure_ascii=False),
             match_reasons=json.dumps(reasons, ensure_ascii=False), image_url=l.image_url, ts=ts,
+            lat=l.data.get("lat"), lon=l.data.get("lon"), geo_precision=l.data.get("geo_precision"),
+            loose_fp=loose_fingerprint(l.data),
         )
         if existing:
             old = _row(existing[0])
@@ -256,9 +294,14 @@ class DB:
                     raw_text=:raw_text, structured=:structured, data=:data, price=:price, rooms=:rooms, area=:area,
                     year=:year, fernwaerme=:fernwaerme, plz=:plz, fingerprint=:fingerprint, match_level=:match_level,
                     matched_profiles=:matched_profiles, match_reasons=:match_reasons, image_url=:image_url,
+                    lat=:lat, lon=:lon, geo_precision=:geo_precision, loose_fp=:loose_fp,
                     last_seen=:ts, last_fetched=:ts, active=1 WHERE id=:id""",
                     {**vals, "id": lid},
                 )
+                if not track_changes:
+                    # Neuauswertung: last_seen/last_fetched/active nicht verfälschen
+                    self.conn.execute("UPDATE listings SET last_seen=?, last_fetched=?, active=? WHERE id=?",
+                                      (old["last_seen"], old["last_fetched"], old["active"], lid))
                 if not old["active"] and track_changes:
                     changes.insert(0, dict(field="online", label="Status", old="offline", new="wieder online",
                                            direction=None))
@@ -275,13 +318,17 @@ class DB:
                 c["old_price"] = old["price"]
             return lid, False, changes
         vals["duplicate_of"] = self.find_duplicate(fp, l.source)
+        prev = self.find_relisting(vals["loose_fp"], l.listing_type, l.address)
+        vals["relisted_of"] = prev["id"] if prev else None
         cur = self._exec(
             """INSERT INTO listings(source, source_id, url, title, address, listing_type, raw_text, structured,
             data, price, rooms, area, year, fernwaerme, plz, fingerprint, duplicate_of, match_level,
-            matched_profiles, match_reasons, image_url, first_seen, last_seen, last_fetched)
+            matched_profiles, match_reasons, image_url, lat, lon, geo_precision, loose_fp, relisted_of,
+            first_seen, last_seen, last_fetched)
             VALUES (:source, :source_id, :url, :title, :address, :listing_type, :raw_text, :structured, :data,
             :price, :rooms, :area, :year, :fernwaerme, :plz, :fingerprint, :duplicate_of, :match_level,
-            :matched_profiles, :match_reasons, :image_url, :ts, :ts, :ts)""",
+            :matched_profiles, :match_reasons, :image_url, :lat, :lon, :geo_precision, :loose_fp, :relisted_of,
+            :ts, :ts, :ts)""",
             vals,
         )
         lid = cur.lastrowid
@@ -290,7 +337,43 @@ class DB:
                         "erstmals gefunden" + (f" – Preis {_fmt(float(price), unit)}" if price else ""), ts=ts)
         if price:
             self._exec("INSERT INTO price_history(listing_id, ts, price) VALUES (?,?,?)", (lid, ts, price))
-        return lid, True, []
+        if not prev:
+            return lid, True, []
+        old_p = _fmt(float(prev["price"]), unit) if prev["price"] else "?"
+        direction = None
+        if prev["price"] and price and abs(price - prev["price"]) >= 1:
+            direction = "down" if price < prev["price"] else "up"
+        self.add_change(lid, "relisted", "Wiedereinstellung", f"#{prev['id']} ({old_p})",
+                        f"neu eingestellt ({_fmt(float(price), unit) if price else '?'})", direction, ts=ts)
+        self.add_change(prev["id"], "relisted_as", "Wiedereinstellung", None, f"erneut eingestellt als #{lid}", ts=ts)
+        return lid, True, [dict(field="relisted", old_id=prev["id"], old_price=prev["price"], direction=direction)]
+
+    def find_relisting(self, loose_fp: str | None, listing_type: str | None, address: str) -> dict | None:
+        """Sucht ein früheres, inzwischen offline genommenes Inserat derselben Wohnung."""
+        if not loose_fp:
+            return None
+        from .geo import has_street
+        for r in self._query(
+                """SELECT id, price, address FROM listings WHERE loose_fp=? AND active=0
+                   AND COALESCE(listing_type,'')=COALESCE(?, '') ORDER BY last_seen DESC LIMIT 5""",
+                (loose_fp, listing_type)):
+            a, b = (r["address"] or "").lower(), (address or "").lower()
+            if has_street(a) and has_street(b) and a.split(",")[0].strip() != b.split(",")[0].strip():
+                continue  # andere Straße -> andere Wohnung
+            return dict(r)
+        return None
+
+    def chain(self, lid: int) -> list[int]:
+        """IDs der Vorgänger-Inserate (Wiedereinstellungen), älteste zuerst, ohne lid selbst."""
+        out, seen = [], {lid}
+        cur = self._query("SELECT relisted_of FROM listings WHERE id=?", (lid,))
+        nxt = cur[0]["relisted_of"] if cur else None
+        while nxt and nxt not in seen:
+            out.append(nxt)
+            seen.add(nxt)
+            r = self._query("SELECT relisted_of FROM listings WHERE id=?", (nxt,))
+            nxt = r[0]["relisted_of"] if r else None
+        return list(reversed(out))
 
     def mark_notified(self, lid: int) -> None:
         self._exec("UPDATE listings SET notified_at=? WHERE id=?", (now(), lid))
@@ -320,9 +403,11 @@ class DB:
     def price_history(self, lid: int) -> list[dict]:
         return [dict(r) for r in self._query("SELECT ts, price FROM price_history WHERE listing_id=? ORDER BY ts", (lid,))]
 
-    def changes(self, lid: int) -> list[dict]:
+    def changes(self, lid: int, with_predecessors: bool = True) -> list[dict]:
+        ids = ([*self.chain(lid), lid]) if with_predecessors else [lid]
+        ph = ",".join("?" * len(ids))
         return [dict(r) for r in self._query(
-            "SELECT * FROM changes WHERE listing_id=? ORDER BY ts DESC, id DESC", (lid,))]
+            f"SELECT * FROM changes WHERE listing_id IN ({ph}) ORDER BY ts DESC, id DESC", ids)]
 
     def search(self, *, match: str | None = None, fernwaerme: str | None = None, source: str | None = None,
                status: str | None = None, listing_type: str | None = None, active_only: bool = True,
@@ -357,6 +442,7 @@ class DB:
                 where.append("(title LIKE ? OR raw_text LIKE ? OR address LIKE ?)"); params += [f"%{q}%"] * 3
         order = {
             "first_seen": "first_seen DESC", "price": "price IS NULL, price ASC",
+            "online": "first_seen ASC",
             "area": "area IS NULL, area DESC", "ppsqm": "(price/area) IS NULL, price/area ASC",
             "likes": "(SELECT COUNT(*) FROM likes WHERE listing_id=listings.id) DESC, first_seen DESC",
             "changed": "(SELECT MAX(ts) FROM changes WHERE listing_id=listings.id AND field<>'created') IS NULL, "
@@ -392,12 +478,47 @@ class DB:
             if cur is None or (is_price and cur["field"] not in PRICE_FIELDS):
                 changes[r["listing_id"]] = dict(r)
             counts[r["listing_id"]] = counts.get(r["listing_id"], 0) + 1
+        stats = self.market_stats()
+        ts_now = datetime.now(timezone.utc)
         for r in rows:
+            chain = self.chain(r["id"]) if r.get("relisted_of") else []
+            first = self._query("SELECT first_seen FROM listings WHERE id=?", (chain[0],))[0]["first_seen"] \
+                if chain else r["first_seen"]
+            end = ts_now if r["active"] else datetime.fromisoformat(r["last_seen"])
+            r["days_online"] = max(0, (end - datetime.fromisoformat(first)).days)
+            r["predecessors"] = chain
+            hist = [h["price"] for h in self._query(
+                f"SELECT price FROM price_history WHERE listing_id IN ({','.join('?' * (len(chain) + 1))}) "
+                "ORDER BY ts", [*chain, r["id"]]) if h["price"]]
+            r["price_drops"] = sum(1 for a, b in zip(hist, hist[1:]) if b < a)
+            r["price_raises"] = sum(1 for a, b in zip(hist, hist[1:]) if b > a)
+            r["first_price"] = hist[0] if hist else None
+            r["price_delta_pct"] = round((r["price"] / hist[0] - 1) * 100, 1) \
+                if hist and r.get("price") and abs(r["price"] - hist[0]) >= 1 else None
+            r["market"] = market_compare(stats, r)
             r["likes"] = likes.get(r["id"], [])
             r["liked"] = user in r["likes"]
             r["comments"] = comments.get(r["id"], [])
             r["last_change"] = changes.get(r["id"])
             r["change_count"] = counts.get(r["id"], 0)
+
+    def market_stats(self, days: int = 365) -> dict:
+        """Median-€/m² je PLZ und gesamt, getrennt nach Kauf/Miete (letzte `days` Tage,
+        ohne Dubletten und ohne durch Wiedereinstellung ersetzte Inserate)."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        rows = self._query(
+            """SELECT listing_type, plz, price, area FROM listings
+               WHERE duplicate_of IS NULL AND price > 0 AND area >= 15 AND first_seen >= ?
+                 AND id NOT IN (SELECT relisted_of FROM listings WHERE relisted_of IS NOT NULL)""", (cutoff,))
+        by: dict[tuple[str, str], list[float]] = {}
+        for r in rows:
+            ppsqm = r["price"] / r["area"]
+            if not 3 < ppsqm < 25000:
+                continue
+            lt = r["listing_type"] or "?"
+            by.setdefault((lt, r["plz"] or "?"), []).append(ppsqm)
+            by.setdefault((lt, "*"), []).append(ppsqm)
+        return {k: (median(v), len(v)) for k, v in by.items()}
 
     def all_for_reprocess(self) -> list[dict]:
         return [_row(r) for r in self._query("SELECT * FROM listings")]
@@ -410,6 +531,53 @@ class DB:
             FROM listings WHERE active=1 AND duplicate_of IS NULL"""
         )[0]
         return dict(r)
+
+    # ------------------------------------------------------- gebiete & co.
+    def geocache_get(self, query: str) -> tuple[float, float] | tuple[()] | None:
+        """None = unbekannt, () = früher erfolglos versucht, sonst (lat, lon)."""
+        r = self._query("SELECT lat, lon FROM geocache WHERE query=?", (query,))
+        if not r:
+            return None
+        return (r[0]["lat"], r[0]["lon"]) if r[0]["lat"] is not None else ()
+
+    def geocache_put(self, query: str, point: tuple[float, float] | None) -> None:
+        self._exec("INSERT OR REPLACE INTO geocache(query, lat, lon, ts) VALUES (?,?,?,?)",
+                   (query, point[0] if point else None, point[1] if point else None, now()))
+
+    def areas(self, kind: str | None = None) -> list[dict]:
+        sql, params = "SELECT * FROM areas", ()
+        if kind:
+            sql, params = sql + " WHERE kind=?", (kind,)
+        out = []
+        for r in self._query(sql + " ORDER BY id", params):
+            d = dict(r)
+            d["geometry"] = json.loads(d["geometry"])
+            out.append(d)
+        return out
+
+    def add_area(self, kind: str, name: str, geometry: dict, user: str) -> int:
+        return self._exec("INSERT INTO areas(kind, name, geometry, created, created_by) VALUES (?,?,?,?,?)",
+                          (kind, name[:100], json.dumps(geometry), now(), user)).lastrowid
+
+    def rename_area(self, aid: int, name: str) -> None:
+        self._exec("UPDATE areas SET name=? WHERE id=?", (name[:100], aid))
+
+    def delete_area(self, aid: int) -> bool:
+        return self._exec("DELETE FROM areas WHERE id=?", (aid,)).rowcount > 0
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        r = self._query("SELECT value FROM settings WHERE key=?", (key,))
+        return json.loads(r[0]["value"]) if r else default
+
+    def set_setting(self, key: str, value: Any) -> None:
+        self._exec("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (key, json.dumps(value)))
+
+    def map_points(self, rows: list[dict]) -> list[dict]:
+        return [dict(id=r["id"], lat=r["lat"], lon=r["lon"], precision=r["geo_precision"], title=r["title"],
+                     price=r["price"], area=r["area"], rooms=r["rooms"], match=r["match_level"],
+                     fw=r["fernwaerme"], likes=len(r.get("likes", [])), url=r["url"],
+                     market=(r.get("market") or {}).get("dev"), active=r["active"])
+                for r in rows if r.get("lat") is not None]
 
     # --------------------------------------------------- likes & kommentare
     def toggle_like(self, lid: int, user: str) -> bool:
@@ -438,6 +606,21 @@ class DB:
 
     def recent_runs(self, limit: int = 30) -> list[dict]:
         return [dict(r) for r in self._query("SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+def market_compare(stats: dict, r: dict) -> dict | None:
+    """Abweichung des €/m² vom Median der PLZ (mind. 3 Vergleiche), sonst vom Gesamtmedian (mind. 5)."""
+    if not r.get("price") or not r.get("area"):
+        return None
+    ppsqm = r["price"] / r["area"]
+    lt = r.get("listing_type") or "?"
+    ref = stats.get((lt, r.get("plz") or "?"))
+    label = f"PLZ {r.get('plz')}"
+    if not ref or ref[1] < 3:
+        ref, label = stats.get((lt, "*")), "alle Inserate"
+        if not ref or ref[1] < 5:
+            return None
+    return {"dev": round((ppsqm / ref[0] - 1) * 100), "median": round(ref[0]), "n": ref[1], "label": label}
 
 
 def _row(r: sqlite3.Row) -> dict:

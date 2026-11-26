@@ -8,6 +8,11 @@
   <div class="card"><span class="muted">Mit Fernwärme</span><b>{{ stats.fw or 0 }}</b></div>
   <div class="card"><span class="muted">Gelikt</span><b class="liked-count">{{ stats.liked or 0 }}</b></div>
 </div>
+{% if not area.plz and not area.polygons %}
+<p class="card small">📍 Noch kein Suchgebiet festgelegt – es gilt die PLZ-Einstellung aus der config.yaml.
+  <a href="/gebiet">Suchgebiet auf der Karte festlegen →</a></p>
+{% endif %}
+{% if reprocessing %}<p class="card small">⏳ Inserate werden gerade neu bewertet – Seite gleich neu laden.</p>{% endif %}
 {% for r in runs %}{% if r.error %}<p class="card fw-nein">⚠️ Letzter Lauf {{ r.source }}: {{ r.error }}</p>{% endif %}{% endfor %}
 
 <form class="filters" method="get">
@@ -22,7 +27,7 @@
   <label>Status<select name="status"><option value="">alle außer ausgeblendet</option>
     {% for s in statuses %}<option {% if f.status==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select></label>
   <label>Sortierung<select name="sort">
-    {% for v,t in [("first_seen","Neueste"),("changed","Zuletzt geändert"),("likes","Meiste Likes"),("price","Preis ↑"),("ppsqm","€/m² ↑"),("area","Fläche ↓")] %}
+    {% for v,t in [("first_seen","Neueste"),("changed","Zuletzt geändert"),("online","Am längsten online"),("likes","Meiste Likes"),("price","Preis ↑"),("ppsqm","€/m² ↑"),("area","Fläche ↓")] %}
     <option value="{{v}}" {% if f.sort==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
   <label>Suche / ID<input name="q" value="{{ f.q }}" placeholder="z.B. Gostenhof oder #12"></label>
   <label><span><input type="checkbox" name="liked" value="1" {% if f.liked %}checked{% endif %}> nur gelikte</span>
@@ -30,11 +35,17 @@
          <span><input type="checkbox" name="dupes" value="1" {% if f.dupes %}checked{% endif %}> Dubletten</span></label>
   <button>Filtern</button>
 </form>
+<div class="export">
+  <span class="muted">{{ rows|length }} Inserate</span>
+  <a href="/karte{{ '?' ~ query if query }}">🗺️ auf Karte zeigen</a>
+  <a href="/export.xlsx{{ '?' ~ query if query }}">⬇ Excel</a>
+  <a href="/export.csv{{ '?' ~ query if query }}">⬇ CSV</a>
+</div>
 
 <div class="list">
 {% for l in rows %}{% set d = l.data %}
   <div class="card item" id="l{{ l.id }}">
-    {% if l.image_url %}<img src="{{ l.image_url }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% else %}<img alt="">{% endif %}
+    {% if l.image_url %}<img src="{{ l.image_url }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.removeAttribute('src')">{% else %}<img alt="">{% endif %}
     <div class="item-main">
       <h3><a class="lid" href="/listing/{{ l.id }}">#{{ l.id }}</a> <a href="/listing/{{ l.id }}">{{ l.title or "(ohne Titel)" }}</a></h3>
       <div class="facts">
@@ -42,6 +53,8 @@
         <span><b>{{ d.area|num(" m²") }}</b></span>
         <span><b>{{ l.price|num(" €") }}</b> {{ "Kaufpreis" if l.listing_type=="kauf" else "kalt" }}</span>
         {% if d.price_per_sqm %}<span>{{ d.price_per_sqm|num(" €/m²") }}</span>{% endif %}
+        {% if l.market %}<span class="{{ 'mkt-good' if l.market.dev < 0 else 'mkt-bad' if l.market.dev > 5 else '' }}"
+          title="Median {{ l.market.label }}: {{ l.market.median|num(' €/m²') }} (n={{ l.market.n }})"><b>{{ "%+d"|format(l.market.dev) }} %</b> ggü. Markt</span>{% endif %}
         {% if d.hausgeld %}<span>Hausgeld {{ d.hausgeld|num(" €") }}</span>{% endif %}
         {% if d.year %}<span>Bj. {{ d.year }}</span>{% endif %}
         {% if d.energy_class %}<span>Klasse {{ d.energy_class }}</span>{% endif %}
@@ -51,6 +64,13 @@
         {% if l.address %}<span>📍 {{ l.address }}</span>{% elif d.plz %}<span>📍 {{ d.plz }}</span>{% endif %}
         <span>{{ l.source }}</span><span>seit {{ l.first_seen|dt("%d.%m.%Y") }}</span>
         {% if d.flags %}<span class="fw-unbekannt">⚠ {{ d.flags|join(", ") }}</span>{% endif %}
+      </div>
+      <div class="kpis">
+        <span title="inkl. früherer Inserate derselben Wohnung">⏱ {{ l.days_online }} Tag{{ "" if l.days_online == 1 else "e" }} am Markt</span>
+        {% if l.price_drops %}<span class="mkt-good">📉 {{ l.price_drops }}× gesenkt{% if l.price_delta_pct %} ({{ "%+.1f"|format(l.price_delta_pct) }} %){% endif %}</span>
+        {% elif l.price_delta_pct %}<span>Preis {{ "%+.1f"|format(l.price_delta_pct) }} %</span>{% endif %}
+        {% if l.relisted_of %}<span class="fw-unbekannt">♻️ wieder eingestellt (früher <a href="/listing/{{ l.relisted_of }}">#{{ l.relisted_of }}</a>)</span>{% endif %}
+        {% set c = calc_for(l) %}{% if c %}<span title="Rate {{ c.rate|num(' €') }} + Hausgeld {{ c.hausgeld|num(' €') }}; Vorgaben im Kostenrechner der Detailseite">💶 ≈ {{ c.belastung|num(" €") }}/Monat</span>{% endif %}
       </div>
       {% if l.last_change %}{% set c = l.last_change %}
       <div class="facts change-hint">
@@ -65,6 +85,7 @@
     <div class="item-side">
       <span class="badge b-{{ l.match_level }}">{{ {"voll":"Volltreffer","teilweise":"möglich","none":"kein Treffer"}[l.match_level] }}</span>
       <span class="badge fw-{{ l.fernwaerme }}">FW: {{ (l.fernwaerme or "?").replace("_"," ") }}</span>
+      {% if d.fw_zone and l.fernwaerme != "ja" %}<span class="badge fw-ja" title="liegt in einem eingezeichneten Fernwärme-Gebiet">FW-Gebiet</span>{% endif %}
       {% if l.status != "neu" %}<span class="badge">{{ l.status }}</span>{% endif %}
       {% if not l.active %}<span class="badge fw-nein">offline</span>{% endif %}
       <a href="{{ l.url }}" target="_blank" rel="noopener">Zum Inserat ↗</a>

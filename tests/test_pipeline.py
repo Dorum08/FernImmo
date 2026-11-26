@@ -72,6 +72,7 @@ def make_cfg(tmp_path, first_run=True, users=None):
                       "heating_required": ["fernwaerme"]}],
         "notify": {"first_run": first_run, "levels": ["voll"]},
         "web": {"users": users or {}},
+        "geocoding": {"enabled": False},
     })
 
 
@@ -226,3 +227,97 @@ def test_web(tmp_path, monkeypatch):
     assert c.get("/runs", auth=A).status_code == 200
     assert c.get(f"/api/listings/{lid}/changes", auth=A).json()[0]["field"] == "created"
     assert c.post("/listing/99999/like", data={"back": "/"}, auth=A).status_code == 404
+
+
+def test_relisting_detected(env):
+    cfg, db, notifier, fake = env
+    pipeline.run_once(cfg, db, notifier)
+    old_id = db.search()[0]["id"]
+    # Inserat verschwindet ...
+    del fake.pages[URL_FW]
+    fake.pages[SEARCH_URL] = SEARCH.replace('data-adid="111"', 'data-adid="999"')
+    pipeline.run_once(cfg, db, notifier)
+    assert db.get(old_id)["active"] == 0
+    # ... und taucht unter neuer Anzeigen-ID günstiger wieder auf
+    url_new = f"{BASE}/s-anzeige/2-zi-fernwaerme-neu/555-196-1234"
+    fake.pages[url_new] = detail("2-Zi-ETW mit Fernwärme – jetzt günstiger", "199.000", 2, 55,
+                                 "Fernwärme, frisch gestrichen.", hausgeld=260)
+    fake.pages[SEARCH_URL] += f'<article class="aditem" data-adid="555" data-href="{url_new[len(BASE):]}"></article>'
+    n = len(notifier.msgs)
+    pipeline.run_once(cfg, db, notifier)
+    new = next(r for r in db.search() if r["source_id"] == "555")
+    assert new["relisted_of"] == old_id
+    assert new["predecessors"] == [old_id]
+    assert new["first_price"] == 219000 and new["price_drops"] == 1
+    assert new["price_delta_pct"] == round((199000 / 219000 - 1) * 100, 1)
+    fields = [c["field"] for c in db.changes(new["id"])]
+    assert "relisted" in fields and "created" in fields and "offline" in fields   # inkl. Vorgänger
+    assert any(c["field"] == "relisted_as" for c in db.changes(old_id, with_predecessors=False))
+    assert "Wieder eingestellt" in notifier.msgs[n][1] and f"#{old_id}" in notifier.msgs[n][1]
+
+
+def test_market_compare(env):
+    cfg, db, notifier, _ = env
+    pipeline.run_once(cfg, db, notifier)
+    stats = db.market_stats()
+    med, n = stats[("kauf", "90443")]
+    assert n == 3
+    assert round(med) == round(219000 / 55)          # Median von 3982, 3317, 4363
+    fw = db.search()[0]
+    assert fw["market"]["dev"] == 0 and fw["market"]["label"] == "PLZ 90443"
+
+
+def test_area_api_map_and_export(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from openpyxl import load_workbook
+    import io
+
+    from fernimmo.web import create_app
+    cfg = make_cfg(tmp_path)
+    monkeypatch.setattr(pipeline, "make_fetcher", lambda *a, **k: FakeFetcher(pages()))
+    db = DB(cfg.db_path)
+    pipeline.run_once(cfg, db, FakeNotifier())
+    c = TestClient(create_app(cfg, db, sync_reprocess=True))
+    lid = db.search()[0]["id"]
+    assert db.get(lid)["match_level"] == "voll"
+    assert db.get(lid)["geo_precision"] == "plz" and db.get(lid)["plz"] == "90443"
+
+    # Suchgebiet ohne 90443 -> kein Treffer mehr
+    r = c.put("/api/search-plz", json={"plz": ["90402", "90403", "kaputt"]})
+    assert r.json()["plz"] == ["90402", "90403"]
+    assert db.get(lid)["match_level"] == "none"
+    # Freihand-Fläche, die 90443 (Gostenhof) überdeckt -> Lage unklar, aber möglicher Treffer
+    square = {"type": "Polygon", "coordinates": [[[11.04, 49.44], [11.07, 49.44], [11.07, 49.46], [11.04, 49.46], [11.04, 49.44]]]}
+    aid = c.post("/api/areas", json={"kind": "search", "name": "Gostenhof", "geometry": square}).json()["id"]
+    assert db.get(lid)["match_level"] == "teilweise"
+    assert "Lage unklar" in " ".join(db.get(lid)["match_reasons"])
+    assert c.post("/api/areas", json={"kind": "search", "geometry": {"type": "Point"}}).status_code == 400
+    assert c.post("/api/areas", json={"kind": "xyz", "geometry": square}).status_code == 400
+    areas = c.get("/api/areas").json()
+    assert areas["plz"] == ["90402", "90403"] and areas["areas"][0]["name"] == "Gostenhof"
+    c.patch(f"/api/areas/{aid}", json={"name": "Gostenhof/Bärenschanze"})
+    assert db.areas()[0]["name"] == "Gostenhof/Bärenschanze"
+    # PLZ wieder aufnehmen -> Volltreffer
+    c.put("/api/search-plz", json={"plz": ["90443"]})
+    assert db.get(lid)["match_level"] == "voll"
+    assert c.delete(f"/api/areas/{aid}").status_code == 200
+    assert c.delete(f"/api/areas/{aid}").status_code == 404
+
+    # Seiten
+    for url in ("/", "/karte", "/gebiet", f"/listing/{lid}", "/static/plz_nuernberg.geojson",
+                "/static/leaflet/leaflet.js"):
+        assert c.get(url).status_code == 200, url
+    det = c.get(f"/listing/{lid}").text
+    assert "Kostenrechner" in det and "Marktlage" in det and "minimap" in det
+    pts = c.get("/api/map?match=").json()
+    assert len(pts["points"]) == 3 and pts["points"][0]["precision"] == "plz"
+
+    # Export
+    csv_text = c.get("/export.csv?match=").content.decode("utf-8-sig")
+    head, *lines = csv_text.strip().splitlines()
+    assert head.startswith("ID;Titel;Quelle") and len(lines) == 3
+    assert "219000" in csv_text
+    wb = load_workbook(io.BytesIO(c.get("/export.xlsx?match=voll").content))
+    ws = wb.active
+    assert ws.cell(1, 1).value == "ID" and ws.max_row == 2
+    assert ws.cell(2, 9).value == 219000 and ws.cell(2, 4).hyperlink is not None

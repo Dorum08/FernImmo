@@ -10,17 +10,36 @@ from datetime import datetime, timedelta, timezone
 from .config import Config
 from .db import DB, now
 from .extract import extract
+from .geo import AreaFilter, Geocoder, plz_for_point
 from .fetch import BlockedError, NotFoundError, make_fetcher
 from .matcher import best_match
 from .models import Listing, RawListing
+from .calc import costs
 from .notify import Notifier, format_message
+
+
+def _calc(row: dict, cfg: Config) -> dict | None:
+    if row.get("listing_type") != "kauf":
+        return None
+    d = row["data"]
+    return costs(row.get("price"), d.get("area"), d.get("hausgeld"), d.get("flags"), cfg.calculator)
 from .sources import build_source
 from .sources.base import SearchHit
 
 log = logging.getLogger(__name__)
 
 
-def evaluate(raw: RawListing, cfg: Config) -> tuple[Listing, list[str]]:
+def load_area(db: DB) -> AreaFilter:
+    """Suchgebiet und Fernwärme-Gebiete aus der Weboberfläche."""
+    return AreaFilter(
+        plz=db.get_setting("search_plz", []),
+        polygons=[a["geometry"] for a in db.areas("search")],
+        fw_zones=[a["geometry"] for a in db.areas("fw")],
+    )
+
+
+def evaluate(raw: RawListing, cfg: Config, geocoder: Geocoder | None = None,
+             area: AreaFilter | None = None) -> tuple[Listing, list[str]]:
     data = extract(raw.text, raw.title, raw.structured)
     # Generischer "Preis" (z.B. Kleinanzeigen) = Kaltmiete bzw. Kaufpreis
     if data.get("price_generic"):
@@ -28,8 +47,20 @@ def evaluate(raw: RawListing, cfg: Config) -> tuple[Listing, list[str]]:
             data["rent_cold"] = data["price_generic"]
         elif raw.listing_type == "kauf" and not data.get("purchase_price"):
             data["purchase_price"] = data["price_generic"]
+    # Lage bestimmen: Koordinaten vom Portal > Adresse geocodiert > Mittelpunkt der PLZ
+    if raw.geo_precision:
+        lat, lon, prec = raw.lat, raw.lon, raw.geo_precision
+    elif geocoder:
+        lat, lon, prec = geocoder.locate(raw.address, data.get("plz"),
+                                         (raw.lat, raw.lon) if raw.lat is not None else None)
+    else:
+        lat, lon, prec = None, None, None
+    data.update(lat=lat, lon=lon, geo_precision=prec)
+    if not data.get("plz") and lat is not None and prec in ("portal", "adresse"):
+        data["plz"] = plz_for_point(lat, lon)
+    data["fw_zone"] = bool(area and area.in_fw_zone(data))
     full_text = f"{raw.title}\n{raw.text}"
-    level, names, reasons = best_match(cfg.profiles, raw.listing_type, data, full_text)
+    level, names, reasons = best_match(cfg.profiles, raw.listing_type, data, full_text, area)
     listing = Listing(
         id=None, source=raw.source, source_id=raw.source_id, url=raw.url, title=raw.title,
         address=raw.address, listing_type=raw.listing_type, data=data, match_level=level,
@@ -42,6 +73,8 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
     started = now()
     stats = {"found": 0, "new": 0, "matches": 0, "error": None}
     fetcher = make_fetcher(scfg.get("fetcher", cfg.fetcher), cfg.delay, cfg.user_agent, cfg.proxy)
+    geocoder = Geocoder(db, cfg.geocoding)
+    area = load_area(db)
     try:
         src = build_source(name, scfg, fetcher)
         known = db.known_ids(src.name)
@@ -69,7 +102,7 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
             except Exception as e:  # noqa: BLE001
                 log.warning("[%s] Detailseite %s fehlgeschlagen: %s", name, hit.url, e)
                 continue
-            listing, reasons = evaluate(raw, cfg)
+            listing, reasons = evaluate(raw, cfg, geocoder, area)
             lid, is_new, changes = db.upsert(listing, raw.structured, reasons)
             row = db.get(lid)
             price_drop = next((c for c in changes if c["field"] in ("purchase_price", "rent_cold")
@@ -84,11 +117,11 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
                 if first_run and not cfg.notify_first_run:
                     first_run_matches.append(row)
                     continue
-                subject, body = format_message(row)
+                subject, body = format_message(row, calc=_calc(row, cfg))
                 notifier.send(subject, body, row["url"])
                 db.mark_notified(lid)
             elif price_drop and cfg.notify_price_drops and (row.get("notified_at") or row["likes"]):
-                subject, body = format_message(row, kind="preis", old_price=price_drop["old_price"])
+                subject, body = format_message(row, kind="preis", old_price=price_drop["old_price"], calc=_calc(row, cfg))
                 notifier.send(subject, body, row["url"])
         if first_run_matches:
             notifier.send(
@@ -121,15 +154,19 @@ def run_once(cfg: Config, db: DB, notifier: Notifier, only: str | None = None) -
 
 
 def reprocess(cfg: Config, db: DB) -> int:
-    """Wertet alle gespeicherten Inserate neu aus (nach Änderungen an Profilen/Regeln)."""
+    """Wertet alle gespeicherten Inserate neu aus (nach Änderungen an Profilen, Regeln oder
+    Suchgebiet). Ohne Netzwerk: Lage kommt aus der Datenbank bzw. dem Geocoding-Cache."""
+    area = load_area(db)
+    geocoder = Geocoder(db, {**cfg.geocoding, "enabled": False})
     n = 0
     for row in db.all_for_reprocess():
         raw = RawListing(
             source=row["source"], source_id=row["source_id"], url=row["url"], title=row["title"] or "",
             text=row["raw_text"] or "", structured=row["structured"] or {}, address=row["address"] or "",
             listing_type=row["listing_type"], image_url=row["image_url"],
+            lat=row.get("lat"), lon=row.get("lon"), geo_precision=row.get("geo_precision"),
         )
-        listing, reasons = evaluate(raw, cfg)
+        listing, reasons = evaluate(raw, cfg, geocoder, area)
         db.upsert(listing, raw.structured, reasons, track_changes=False)
         n += 1
     return n

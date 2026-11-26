@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Karte – FernImmo{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/leaflet/leaflet.css">
+<script src="/static/leaflet/leaflet.js"></script>
+<script src="/static/fernimmo-map.js"></script>
+{% endblock %}
+{% block content %}
+<form class="filters" method="get">
+  <label>Treffer<select name="match">
+    {% for v,t in [("treffer","Voll + möglich"),("voll","Nur Volltreffer"),("teilweise","Nur mögliche"),("","Alle Inserate")] %}
+    <option value="{{v}}" {% if f.match==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
+  <label>Fernwärme<select name="fernwaerme">
+    {% for v,t in [("","egal"),("ja","ja"),("unbekannt","unbekannt"),("eher_nein","eher nein"),("nein","nein")] %}
+    <option value="{{v}}" {% if f.fernwaerme==v %}selected{% endif %}>{{t}}</option>{% endfor %}</select></label>
+  <label><span><input type="checkbox" name="liked" value="1" {% if f.liked %}checked{% endif %}> nur gelikte</span>
+         <span><input type="checkbox" name="inactive" value="1" {% if f.inactive %}checked{% endif %}> auch offline</span></label>
+  <button>Filtern</button>
+  <a href="/gebiet" style="align-self:center">Suchgebiet bearbeiten →</a>
+</form>
+<div class="legend small">
+  <span><i class="dot" style="background:#15803d"></i> Volltreffer</span>
+  <span><i class="dot" style="background:#d97706"></i> möglich</span>
+  <span><i class="dot" style="background:#9ca3af"></i> kein Treffer</span>
+  <span><i class="dot ring"></i> Lage nur PLZ-genau</span>
+  <span><i class="sq" style="border-color:#2563eb"></i> Suchgebiet</span>
+  <span><i class="sq dashed" style="border-color:#dc2626"></i> Fernwärme-Gebiet</span>
+  <span id="nolocation" class="muted"></span>
+</div>
+<div id="map" class="map-big"></div>
+
+<script>
+(async () => {
+  const map = FI.map("map", {{ center|tojson }}, 12);
+  const [data, areaState, plz] = await Promise.all([
+    FI.json("/api/map?" + {{ query|tojson }}), FI.json("/api/areas"), FI.plz()]);
+
+  // Suchgebiet: ausgewählte PLZ + gezeichnete Flächen
+  const sel = new Set(areaState.plz);
+  L.geoJSON(plz, {filter: f => sel.has(f.properties.plz),
+    style: {color: FI.colors.search, weight: 1, fillOpacity: 0.07}}).addTo(map);
+  const bounds = [];
+  areaState.areas.forEach(a => {
+    const layer = FI.areaLayer(a, {interactive: false}).addTo(map).bringToBack();
+    if (a.kind === "search") { const b = layer.getBounds(); bounds.push(b.getSouthWest(), b.getNorthEast()); }
+  });
+
+  const PREC = {portal: "laut Portal", adresse: "aus Adresse", plz: "nur PLZ"};
+  for (const p of data.points) {
+    const exact = p.precision !== "plz";
+    // Mehrere Inserate am PLZ-Mittelpunkt leicht versetzen, damit man sie anklicken kann
+    const jitter = exact ? [0, 0] : [((p.id * 7919) % 100 - 50) / 40000, ((p.id * 104729) % 100 - 50) / 25000];
+    const pos = [p.lat + jitter[0], p.lon + jitter[1]];
+    const color = FI.colors[p.match] || FI.colors.none;
+    const m = L.circleMarker(pos, {
+      radius: exact ? 8 : 7, color: exact ? "#fff" : color, weight: exact ? 2 : 3,
+      fillColor: exact ? color : "#fff", fillOpacity: exact ? 0.95 : 0.6, opacity: p.active ? 1 : 0.4,
+    }).addTo(map);
+    const mk = p.market == null ? "" : ` · <b class="${p.market < 0 ? "fw-ja" : "fw-nein"}">${p.market > 0 ? "+" : ""}${p.market} %</b> ggü. Markt`;
+    m.bindPopup(`<b><a href="/listing/${p.id}">#${p.id} ${FI.esc(p.title)}</a></b><br>
+      ${p.rooms ?? "?"} Zi. · ${FI.num(p.area, " m²")} · ${FI.num(p.price, " €")}${mk}<br>
+      Fernwärme: ${FI.esc((p.fw || "?").replace("_", " "))}${p.likes ? ` · ♥ ${p.likes}` : ""}<br>
+      <span class="muted small">Lage: ${PREC[p.precision] || "?"}</span>
+      · <a href="${FI.esc(p.url)}" target="_blank" rel="noopener">Inserat ↗</a>`);
+    m.bindTooltip(`#${p.id} · ${FI.num(p.price, " €")}`);
+    bounds.push(pos);
+  }
+  if (bounds.length) map.fitBounds(bounds, {padding: [30, 30], maxZoom: 14});
+  document.getElementById("nolocation").textContent =
+    `${data.points.length} auf der Karte` + (data.without_location ? `, ${data.without_location} ohne bekannte Lage` : "");
+})();
+</script>
+{% endblock %}

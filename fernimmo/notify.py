@@ -24,13 +24,16 @@ def fmt_num(v, suffix="", digits=0) -> str:
     return s + suffix
 
 
-def format_message(l: dict[str, Any], kind: str = "neu", old_price: float | None = None) -> tuple[str, str]:
+def format_message(l: dict[str, Any], kind: str = "neu", old_price: float | None = None,
+                   calc: dict[str, Any] | None = None) -> tuple[str, str]:
     """Liefert (Betreff, Text) für ein Inserat (dict aus der DB)."""
     d = l["data"]
     heating = ", ".join(HEATING_NAMES.get(h, h) for h in d.get("heating_sources", [])) or "unbekannt"
     level = {"voll": "✅ Treffer", "teilweise": "🟡 Möglicher Treffer"}.get(l["match_level"], "Inserat")
     if kind == "preis":
         level = "📉 Preis gesenkt"
+    elif l.get("relisted_of"):
+        level = "♻️ Wieder eingestellt"
     price_label = "Kaufpreis" if l.get("listing_type") == "kauf" else "Kaltmiete"
     lines = [
         f"{level}: {l['title']}",
@@ -52,6 +55,16 @@ def format_message(l: dict[str, Any], kind: str = "neu", old_price: float | None
         extra.append(f"{fmt_num(d['price_per_sqm'], ' €/m²', 2)}")
     if extra:
         lines.append(" · ".join(extra))
+    m = l.get("market")
+    if m:
+        lines.append(f"Markt: {m['dev']:+d} % ggü. Median {m['label']} ({fmt_num(m['median'], ' €/m²')}, n={m['n']})")
+    if l.get("relisted_of"):
+        lines.append(f"Früher als #{l['relisted_of']} inseriert"
+                     + (f", erster Preis {fmt_num(l.get('first_price'), ' €')}" if l.get("first_price") else "")
+                     + f" – insgesamt {l.get('days_online', 0)} Tage am Markt")
+    if calc:
+        lines.append(f"≈ {fmt_num(calc['belastung'], ' €')}/Monat (Rate {fmt_num(calc['rate'], ' €')} + Hausgeld), "
+                     f"Kaufnebenkosten {fmt_num(calc['nebenkosten'], ' €')}")
     if l.get("address"):
         lines.append(f"📍 {l['address']}")
     if l.get("match_reasons"):

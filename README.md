@@ -20,6 +20,13 @@ Voreingestellt ist die Suche nach **1–2-Zimmer-Eigentumswohnungen (Kauf) in N�
 | **IDs, Likes, Kommentare** | Jede Wohnung hat eine feste FernImmo-ID (#12; auch in den Meldungen, über die Suche direkt aufrufbar). Auf der Übersicht kann jede angemeldete Person liken und kommentieren; man sieht, wer was gelikt und geschrieben hat. |
 | **Änderungsverlauf** | Treffer und gelikte Wohnungen werden regelmäßig neu abgerufen. Jede Änderung (Kaufpreis, Hausgeld, Fläche, Energiedaten, Titel, Beschreibung, offline/wieder online …) wird mit Datum und Uhrzeit auf der Detailseite protokolliert, Preissenkungen grün, Erhöhungen rot. |
 | **Meldungen** | Telegram, ntfy (Push aufs Handy ohne Konto), E-Mail; Preissenkungen bei gemeldeten oder gelikten Wohnungen |
+| **Suchgebiet** | Auf der Seite „Suchgebiet“: PLZ per Klick auf der Karte oder per Liste auswählen und/oder Flächen frei mit Maus oder Finger einzeichnen (beliebig viele). Zusätzlich lassen sich Fernwärme-Gebiete einzeichnen: Steht im Inserat keine Heizung, liegt die Wohnung aber darin, wird das angezeigt. Nach jeder Änderung werden alle Inserate automatisch neu bewertet. |
+| **Karte** | Alle Inserate (mit den Filtern der Übersicht) auf einer OpenStreetMap-Karte, farbig nach Treffer, mit Suchgebiet und Infos per Klick. |
+| **Marktvergleich** | €/m² jeder Wohnung im Vergleich zum Median ihrer PLZ (ab 3 Vergleichsinseraten, sonst über alle). Die Vergleichsbasis sind die Inserate, die FernImmo im letzten Jahr gesammelt hat; sie wird also mit der Zeit besser. |
+| **Angebotsdauer** | Tage am Markt, Anzahl Preissenkungen und Preisänderung seit dem ersten Preis; Sortierung „am längsten online“. |
+| **Wiedereinstellungen** | Wird eine Wohnung gelöscht und neu eingestellt (gleiche PLZ, Fläche, Zimmer), verknüpft FernImmo beide. Angebotsdauer und Verlauf zählen ab dem ersten Inserat, die Meldung sagt „wieder eingestellt“. |
+| **Kostenrechner** | Pro Wohnung: Kaufnebenkosten (Bayern), Darlehen, Monatsrate, monatliche Belastung inkl. Hausgeld, Brutto-/Nettomietrendite und Kaufpreisfaktor. Werte im Browser änderbar; die Monatsbelastung steht auch in Übersicht und Meldung. |
+| **Export** | Aktuelle Liste (mit allen Filtern) als Excel- oder CSV-Datei, inklusive Likes, Kommentaren und Kennzahlen. |
 | **Dubletten** | Dasselbe Objekt auf mehreren Portalen wird erkannt (PLZ, Fläche, Preis, Zimmer) und nur einmal gemeldet |
 | **Weboberfläche** | Filter (u. a. „nur gelikte“), Sortierung nach Preis, €/m², Likes oder letzter Änderung, Status (Favorit, kontaktiert, Besichtigung, ausgeblendet), Laufprotokoll, „Jetzt suchen“-Knopf, JSON-API unter `/api/listings` und `/api/listings/<id>/changes` |
 
@@ -102,6 +109,26 @@ Beispiel eines für Miete und eines für Kauf. Wichtige Schalter:
 - `plz: ["904"]`: nur Nürnberger Stadtgebiet
 - `exclude_flags`: z. B. `[gesuch, versteigerung, erbpacht, vermietet]`; dazu `exclude_keywords`, `required_features`
 
+## Lage und Karte
+
+FernImmo bestimmt die Lage jeder Wohnung so genau wie möglich:
+
+1. **laut Portal:** Koordinaten, die das Portal in der Seite mitliefert
+2. **aus der Adresse:** Steht eine Straße im Inserat, wird sie über OpenStreetMap
+   (Nominatim) in Koordinaten umgerechnet. Das passiert höchstens einmal pro Sekunde
+   und wird gespeichert. Abschalten mit `geocoding: enabled: false`.
+3. **nur PLZ:** Mittelpunkt des PLZ-Gebiets
+
+Liegt eine Wohnung nur PLZ-genau vor und überschneidet das PLZ-Gebiet eine
+gezeichnete Fläche, gilt die Lage als **unklar**. Die Wohnung wird dann als
+möglicher Treffer gemeldet statt verworfen.
+
+Die PLZ-Grenzen für den Raum Nürnberg (71 Gebiete inkl. Fürth, Erlangen,
+Schwabach, Stein, Zirndorf …) liegen fertig im Projekt
+(`fernimmo/static/plz_nuernberg.geojson`, © OpenStreetMap-Mitwirkende, ODbL,
+Stand Februar 2026). Die Kartenkacheln lädt dein Browser direkt von
+openstreetmap.org.
+
 ## Suchseiten (Quellen-URLs)
 
 Am zuverlässigsten: die Suche auf dem jeweiligen Portal im Browser einstellen
@@ -156,7 +183,10 @@ fernimmo/
   extract.py    Merkmalserkennung aus Text und Label-Wert-Paaren
   matcher.py    Abgleich mit Suchprofilen (voll / teilweise / kein Treffer)
   pipeline.py   Suchlauf, Speichern, Melden, Zeitplan
-  db.py         SQLite (Inserate, Änderungsverlauf, Likes, Kommentare, Läufe)
+  db.py         SQLite (Inserate, Änderungsverlauf, Likes, Kommentare, Gebiete, Läufe)
+  geo.py        Koordinaten, Geocoding, PLZ-Gebiete, Punkt-in-Fläche, Suchgebiet
+  calc.py       Kostenrechner (Kaufnebenkosten, Finanzierung, Rendite)
+  static/       Leaflet (Karte), PLZ-Grenzen, Kartencode
   notify.py     Telegram / ntfy / E-Mail
   web.py        Weboberfläche (FastAPI + Jinja)
 ```
