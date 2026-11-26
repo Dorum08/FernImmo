@@ -69,6 +69,43 @@ docker compose exec fernimmo python -m fernimmo -c /app/config.yaml reprocess   
 
 Nach Änderungen an `config.yaml`: `docker compose restart`.
 
+## Asustor-NAS mit Portainer
+
+GitHub baut bei jeder Änderung automatisch ein fertiges Image (`ghcr.io/dorum08/fernimmo:latest`,
+für Intel- und ARM-Modelle). Das NAS muss nichts selbst bauen.
+
+**1. Zugang zum privaten Image (einmalig)**
+- Auf github.com: Profilbild → Settings → Developer settings → Personal access tokens →
+  Tokens (classic) → *Generate new token (classic)*. Haken nur bei **read:packages**, Ablaufdatum nach Wunsch.
+  Token kopieren.
+- In Portainer: **Registries → Add registry → Custom registry**
+  - Name: `GitHub`, Registry URL: `ghcr.io`
+  - *Authentication* an, Username: dein GitHub-Benutzername, Password: das Token
+
+**2. Ordner und Konfiguration auf dem NAS**
+- Im ADM-Dateimanager den Ordner `Docker/fernimmo` anlegen (also `/volume1/Docker/fernimmo`), darin den
+  Unterordner `data`. Gibt es keine Freigabe „Docker“, einen anderen Ort nehmen und die Pfade im Stack anpassen.
+- `config.example.yaml` aus dem Repo herunterladen, als `config.yaml` in diesen Ordner legen und anpassen
+  (Such-URLs, `web.public_url`, z. B. `http://192.168.178.20:8080`). Passwörter **nicht** hier eintragen,
+  die kommen als Umgebungsvariablen in Portainer.
+
+**3. Stack anlegen**
+- Portainer → **Stacks → Add stack**, Name `fernimmo`, *Web editor*.
+- Inhalt von `deploy/portainer-stack.yml` einfügen.
+- Unten bei **Environment variables** eintragen: `WEB_PASSWORD` (Pflicht), optional `TELEGRAM_ENABLED=true`,
+  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+- **Deploy the stack**. Danach im Browser `http://<NAS-IP>:8080` öffnen, Benutzer `ich` und dein Passwort.
+
+**4. Updates**
+- Stacks → fernimmo → **Editor** → *Update the stack* mit **Re-pull image and redeploy**.
+  Datenbank, Suchen und Likes liegen in `data/` und bleiben erhalten; Sicherungen in `data/backups/`.
+
+**Tipps**
+- Port 8080 belegt? Im Stack links den Port ändern, z. B. `"8090:8080"`, und `public_url` anpassen.
+- Logs: Containers → fernimmo → *Logs*. Testnachricht: Containers → fernimmo → *Console* →
+  `python -m fernimmo -c /app/config.yaml test-notify`.
+- Für die Android-App die Adresse `http://<NAS-IP>:8080` eintragen; das Handy erreicht sie über WireGuard.
+
 ## Ohne Docker
 
 ```bash
