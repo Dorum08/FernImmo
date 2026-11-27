@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 # Bekannte Portale: Domain und typische Wörter in Exposé-Links (nur als Vorzug bei der
 # Mustererkennung – die Erkennung funktioniert auch ohne).
 PORTALS: dict[str, dict[str, Any]] = {
-    "ohne-makler": {"domain": "ohne-makler.de", "hints": ["immobilie", "expose", "objekt"]},
+    "ohne-makler": {"domain": "ohne-makler.net", "hints": ["immobilie", "expose", "objekt"]},
     "immobilo": {"domain": "immobilo.de", "hints": ["expose", "immobilie", "objekt", "angebot"]},
     "immobilien.de": {"domain": "immobilien.de", "hints": ["expose", "immobilie", "objekt"]},
     "meinestadt": {"domain": "meinestadt.de", "hints": ["expose", "immobilie", "objekt", "angebot"]},
@@ -56,8 +56,12 @@ def shape(url: str) -> str | None:
     if not u.scheme.startswith("http") or _SKIP_EXT.search(u.path):
         return None
     segs, has_id = [], False
-    for seg in [s for s in u.path.split("/") if s]:
-        if _ID.search(seg) and re.search(r"\d", seg):
+    parts = [s for s in u.path.split("/") if s]
+    for i, seg in enumerate(parts):
+        # Orts-/PLZ-Unterseiten (…/nuernberg:90453/…, …/90427/kaufen/…) sind keine Objektnummern
+        if re.fullmatch(r"\D+\b\d{5}\b\D*|\D*\b\d{5}\b\D+", seg) or (re.fullmatch(r"\d{5}", seg) and i < len(parts) - 1):
+            segs.append("{plz}")
+        elif _ID.search(seg) and re.search(r"\d", seg):
             segs.append("{id}")
             has_id = True
         elif len(seg) > 25 or seg.count("-") >= 3:

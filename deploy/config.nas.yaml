@@ -19,6 +19,39 @@ sources:
     urls:
       - url: https://www.immowelt.de/classified-search?distributionTypes=Buy&estateTypes=Apartment&locations=AD08DE6345&numberOfRoomsMax=2
         type: kauf
+  # --- Weitere Portale (lernfähiger Adapter, je eine Suchseite für Nürnberg) ----
+  # Für andere Städte die Suche im Browser auf dem Portal einstellen und die URL
+  # aus der Adresszeile zusätzlich unter urls eintragen.
+  ohne-makler:
+    urls: [https://www.ohne-makler.net/immobilien/wohnung-kaufen/bayern/nurnberg/]
+    type_default: kauf
+  immobilien.de:
+    urls: [https://www.immobilien.de/kaufen/wohnung/nuernberg/]
+    type_default: kauf
+  ivd24:
+    urls: [https://www.ivd24immobilien.de/liste/bayern/nuernberg/wohnung_kaufen/]
+    type_default: kauf
+  regionalimmobilien24:
+    urls: [https://www.regionalimmobilien24.de/mittelfranken/nuernberg/kaufen/wohnung/]
+    type_default: kauf
+  1a-immobilienmarkt:
+    urls: [https://www.1a-immobilienmarkt.de/suchen/nuernberg/wohnung-kaufen.html]
+    type_default: kauf
+  # Meta-Suchen – verlinken oft auf Immowelt/Kleinanzeigen, die dann mit deren Adapter gelesen werden
+  immobilo:
+    urls: [https://www.immobilo.de/kaufen/wohnung/nuernberg]
+    type_default: kauf
+  meinestadt:
+    urls: [https://www.meinestadt.de/nuernberg/immobilien/wohnung-kaufen]
+    type_default: kauf
+  immoscout24:
+    enabled: false            # starker Bot-Schutz: nur mit dem Image :browser auf true setzen
+    fetcher: playwright
+    urls:
+      - url: https://www.immobilienscout24.de/Suche/de/bayern/nuernberg/wohnung-kaufen
+        type: kauf
+    max_pages: 2
+    max_details_per_run: 20
 
 profiles:
   - name: Nürnberg Fernwärme

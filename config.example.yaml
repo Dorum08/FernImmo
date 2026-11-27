@@ -64,25 +64,25 @@ sources:
   # Nach dem ersten Lauf mit `python -m fernimmo check <Inserat-URL>` prüfen,
   # ob Zimmer, Fläche, Preis und Heizung erkannt werden.
   ohne-makler:
-    urls: []        # z.B. Suchergebnis-URL von ohne-makler.de
+    urls: [https://www.ohne-makler.net/immobilien/wohnung-kaufen/bayern/nurnberg/]
     type_default: kauf
   immobilo:
-    urls: []        # Meta-Suche: Inserate auf Immowelt/Kleinanzeigen werden mit deren Adapter gelesen
+    urls: [https://www.immobilo.de/kaufen/wohnung/nuernberg]   # Meta-Suche: Immowelt-/Kleinanzeigen-Links mit deren Adapter
     type_default: kauf
   immobilien.de:
-    urls: []
+    urls: [https://www.immobilien.de/kaufen/wohnung/nuernberg/]
     type_default: kauf
   meinestadt:
-    urls: []        # Immobilienteil von meinestadt.de (meist Inserate von Immowelt)
+    urls: [https://www.meinestadt.de/nuernberg/immobilien/wohnung-kaufen]   # meist Inserate von Immowelt
     type_default: kauf
   ivd24:
-    urls: []        # ivd24immobilien.de
+    urls: [https://www.ivd24immobilien.de/liste/bayern/nuernberg/wohnung_kaufen/]
     type_default: kauf
   regionalimmobilien24:
-    urls: []
+    urls: [https://www.regionalimmobilien24.de/mittelfranken/nuernberg/kaufen/wohnung/]
     type_default: kauf
   1a-immobilienmarkt:
-    urls: []
+    urls: [https://www.1a-immobilienmarkt.de/suchen/nuernberg/wohnung-kaufen.html]
     type_default: kauf
 
   # Vergleichsmieten: Miet-Suchseiten mitlesen, damit Kostenrechner und Marktseite mit

@@ -140,3 +140,11 @@ def test_criteria_from_web_apply_to_matching(tmp_path, monkeypatch):
     assert c.get("/liste?match=&rooms_min=1.5&rooms_max=2").status_code == 200
     # PLZ-Anfänge: "904" deckt "90443" ab, Doppelungen fallen weg
     assert c.patch(f"/api/searches/{sid}", json={"plz": ["904", "90443", "1"]}).json()["plz"] == ["1", "904"]
+
+
+def test_shape_ignores_plz_subpages():
+    from fernimmo.sources.generic import shape
+    assert shape("https://www.1a-immobilienmarkt.de/suchen/nuernberg:90453/wohnung-kaufen.html") is None
+    assert shape("https://www.regionalimmobilien24.de/mittelfranken/90427/kaufen/wohnung/") is None
+    assert shape("https://www.regionalimmobilien24.de/mittelfranken/kaufen/wohnung/623272491/").endswith("{id}")
+    assert shape("https://www.ohne-makler.net/immobilie/12345/").endswith("{id}")
