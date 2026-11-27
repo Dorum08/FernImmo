@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 <meta name="theme-color" content="#0b2545">
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/fernimmo.css?v=6">
+<link rel="stylesheet" href="/static/fernimmo.css?v=7">
 </head>
 <body>
 <header class="top">
@@ -18,11 +18,11 @@
   {% set nc = nav_counts(user) if user else {"new": 0, "objects": 0} %}
   <nav>
     <a href="/" class="{{ 'on' if path == '/' or path.startswith('/objekte') }}">Suche</a>
-    <a href="/suchen" class="{{ 'on' if path.startswith('/suchen') or path == '/suche' }}">Meine Suchen{% if nc.new %} <span class="nav-badge">{{ nc.new }}</span>{% endif %}</a>
-    <a href="/merkliste" class="{{ 'on' if path.startswith('/merkliste') }}">Meine Objekte{% if nc.objects %} <span class="nav-badge muted-badge">{{ nc.objects }}</span>{% endif %}</a>
-    <a href="/markt" class="{{ 'on' if path.startswith('/markt') }}">Statistiken</a>
+    <a href="/suchen" class="{{ 'on' if path.startswith('/suchen') or path == '/suche' }}"><span class="lg">Meine </span>Suchen{% if nc.new %} <span class="nav-badge">{{ nc.new }}</span>{% endif %}</a>
+    <a href="/merkliste" class="{{ 'on' if path.startswith('/merkliste') }}"><span class="lg">Meine </span>Objekte{% if nc.objects %} <span class="nav-badge muted-badge">{{ nc.objects }}</span>{% endif %}</a>
+    <a href="/markt" class="{{ 'on' if path.startswith('/markt') }}">Statistik<span class="lg">en</span></a>
     <details class="nav-more {{ 'on' if path in ('/karte', '/liste', '/runs') }}">
-      <summary>Mehr ▾</summary>
+      <summary>Mehr<span class="caret"> ▾</span></summary>
       <div class="nav-menu">
         <a href="/karte">🗺 Karte</a>
         <a href="/liste">☰ Inserate als Liste (mit Kommentaren)</a>
