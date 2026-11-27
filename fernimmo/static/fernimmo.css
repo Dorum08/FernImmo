@@ -67,6 +67,11 @@ header.top a { color: rgba(255, 255, 255, .86); }
 header.top nav { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
 header.top nav a { padding: 7px 12px; border-radius: 999px; font-size: 14px; font-weight: 500; }
 header.top nav a:hover { background: rgba(255, 255, 255, .09); color: #fff; text-decoration: none; }
+header.top nav .sm { display: none; }
+@media (max-width: 1180px) {
+  header.top .who { display: none; }
+  header.top nav a { padding: 7px 9px; }
+}
 header.top nav a.on { background: rgba(255, 255, 255, .14); color: #fff; box-shadow: inset 0 -2px 0 var(--amber); }
 .who { font-size: 12.5px; color: rgba(255, 255, 255, .65) !important; }
 .who b { color: #fff; font-weight: 600; }
@@ -256,12 +261,13 @@ label.inline { flex-direction: row; align-items: center; gap: 6px; font-size: 14
 /* ---------- Handy ---------- */
 @media (max-width: 640px) {
   header.top { padding: 8px 12px; gap: 6px 10px; }
-  /* Reiter: fünf gleich breite Felder, nichts scrollt, nichts wird abgeschnitten */
-  header.top nav { order: 3; flex-basis: 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  /* Reiter: zwei Reihen gleich breiter Felder, nichts scrollt, nichts wird abgeschnitten */
+  header.top nav { order: 3; flex-basis: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 2px; flex-wrap: nowrap; }
   header.top nav a, .nav-more > summary { padding: 7px 2px; font-size: 13px; white-space: nowrap; text-align: center;
     overflow: hidden; text-overflow: ellipsis; line-height: 1.25; }
-  header.top nav .lg, .nav-more .caret { display: none; }
+  header.top nav .lg { display: none; }
+  header.top nav .sm { display: inline; }
   header.top nav a { position: relative; overflow: visible; }
   header.top nav .nav-badge { position: absolute; top: -3px; right: 2px; min-width: 16px; padding: 0 4px; margin: 0;
     font-size: 10px; line-height: 15px; }
