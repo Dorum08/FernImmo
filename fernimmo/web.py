@@ -3,6 +3,8 @@ Detailansicht mit Änderungsverlauf und Kostenrechner, Karte, Suchgebiet-Editor,
 Export, Laufprotokoll."""
 from __future__ import annotations
 
+import re
+
 import csv
 import io
 import secrets
@@ -321,6 +323,30 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
             x["n_hits"] = len(db.search(search_id=x["id"], match="treffer", user=None, limit=5000))
         return templates.TemplateResponse(request, "searches.html", {"user": user, "searches": searches})
 
+    def why_not(sid: int) -> dict:
+        """Diagnose: warum passen gesammelte Inserate nicht zu dieser Suche? (live nachgerechnet)"""
+        from collections import Counter
+        from .matcher import match
+        from .searches import load_searches
+        s = next((x for x in load_searches(db, only_active=False) if x.id == sid), None)
+        if s is None:
+            return {}
+        by_reason: Counter = Counter()
+        by_source: dict[str, Counter] = {}
+        examples: dict[str, list] = {}
+        total = 0
+        for r in db.search(match=None, user=None, limit=20000):
+            total += 1
+            res = match(s.profile, r["listing_type"], r["data"], f"{r['title']}\n{r.get('raw_text') or ''}", s.area)
+            key = "passt" if res.level != "none" else re.sub(r"[\d.,]+(?:\.\d+)?", "…", res.reasons[0] if res.reasons else "?")
+            if key.startswith("PLZ") or key.startswith("außerhalb"):
+                key = "außerhalb des Suchgebiets"
+            by_reason[key] += 1
+            by_source.setdefault(r["source"], Counter())[key] += 1
+            if key != "passt" and len(examples.setdefault(key, [])) < 3:
+                examples[key].append(r)
+        return {"total": total, "reasons": by_reason.most_common(), "sources": by_source, "examples": examples}
+
     @app.get("/suchen/{sid}", response_class=HTMLResponse)
     def search_results(request: Request, sid: int, level: str = "treffer", offline: int = 0, hidden: int = 0,
                        user: str = Depends(auth)):
@@ -332,6 +358,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
                          status="ausgeblendet" if hidden else None)
         return templates.TemplateResponse(request, "results.html", results_ctx(
             request, user, work(rows), srch=srch, title=srch["name"], level=level, offline=offline, hidden=hidden,
+            why=why_not(sid),
             export_q=f"search={sid}&match={level}" + ("&inactive=1" if offline else "")))
 
     @app.get("/objekte", response_class=HTMLResponse)

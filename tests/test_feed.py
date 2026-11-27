@@ -56,3 +56,11 @@ def test_feed(tmp_path, monkeypatch):
     res = pipeline.run_once(cfg, db, FakeNotifier())["kleinanzeigen"]
     assert FEED2 in fake.calls and res["new"] == 1
     assert "HH" in {r["title"] for r in db.search(match="treffer")}
+
+
+def test_kleinanzeigen_fallback_tiles():
+    from fernimmo.sources.kleinanzeigen import Kleinanzeigen
+    html = ('<ul><li><div><a href="/s-anzeige/eins/111-196-1">ETW</a><p>90443 Nürnberg 2 Zi. 55 m²</p></div></li>'
+            '<li><div><a href="/s-anzeige/zwei/222-196-1">ETW</a><p>51147 Köln 3 Zi. 70 m²</p></div></li></ul>')
+    hits = {h.source_id: h for h in Kleinanzeigen({}, FakeFetcher({})).search_hits(html, FEED, "kauf")}
+    assert "90443" in hits["111"].snippet and "51147" in hits["222"].snippet and "90443" not in hits["222"].snippet

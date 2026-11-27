@@ -154,3 +154,12 @@ def test_outside_note_and_market_filter(tmp_path, monkeypatch):
     assert all(r["plz"].startswith("904") for r in db.market_table(plz_prefix="904"))
     assert db.market_table(plz_prefix="511") == []
     assert c.get("/runs", auth=A).status_code == 200
+
+
+def test_why_not(tmp_path, monkeypatch):
+    cfg, db, c = setup(tmp_path, monkeypatch)
+    sid = db.searches()[0]["id"]
+    page = c.get(f"/suchen/{sid}", auth=A).text
+    assert "Warum nicht mehr Treffer?" in page and "Zimmer … außerhalb" in page and "passt (Treffer)" in page
+    db.update_search(sid, plz=["10"])
+    assert "außerhalb des Suchgebiets" in c.get(f"/suchen/{sid}", auth=A).text

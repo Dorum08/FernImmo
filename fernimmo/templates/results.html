@@ -41,4 +41,17 @@
 </div>
 {% endif %}
 {{ results_table(rows, sum, financing, export_q) }}
+{% if why and why.total %}
+<details class="card why" {{ "open" if not rows }}>
+  <summary><b>Warum nicht mehr Treffer?</b> <span class="muted small">– alle {{ why.total }} gesammelten Inserate gegen diese Suche geprüft</span></summary>
+  <div class="table-scroll"><table>
+    <tr><th>Grund</th><th>Anzahl</th>{% for src in why.sources %}<th>{{ src }}</th>{% endfor %}<th>Beispiele</th></tr>
+    {% for reason, n in why.reasons %}
+    <tr><td>{{ "✔ passt (Treffer)" if reason == "passt" else reason }}</td><td><b>{{ n }}</b></td>
+      {% for src, cnt in why.sources.items() %}<td class="muted">{{ cnt[reason] or "" }}</td>{% endfor %}
+      <td class="small">{% for e in why.examples.get(reason, []) %}<a href="/listing/{{ e.id }}">#{{ e.id }}</a> {{ e.plz or "" }}{{ " · " if not loop.last }}{% endfor %}</td></tr>
+    {% endfor %}
+  </table></div>
+</details>
+{% endif %}
 {% endblock %}

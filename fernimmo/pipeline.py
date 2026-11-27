@@ -198,6 +198,9 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
             db.mark_inactive(src.name, cutoff)
         # Bei bundesweiten Feeds liegt fast alles außerhalb – dort ist das gewollt
         stats["note"] = None if is_feed else outside_note(outside, checked, stats["prefiltered"], len(new_hits))
+        if is_feed and len(new_hits) >= 20 and not any(extract(h.snippet or "").get("plz") for h in new_hits):
+            stats["note"] = ("Ergebnisliste ohne erkennbare PLZ – Vorsortierung nach Suchgebiet nicht möglich, "
+                             f"es werden nur die neuesten {src.max_details} Inserate je Lauf geöffnet")
         if stats["note"]:
             log.warning("[%s] %s", name, stats["note"])
     except BlockedError as e:

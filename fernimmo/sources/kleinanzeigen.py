@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from ..fetch import NotFoundError
 from ..models import RawListing
-from .base import SearchHit, Source, clean_soup, is_http, meta, text_of
+from .base import SearchHit, Source, card_snippet, clean_soup, is_http, meta, text_of
 
 
 class Kleinanzeigen(Source):
@@ -42,7 +42,20 @@ class Kleinanzeigen(Source):
                 continue
             hits.setdefault(aid, SearchHit(aid, urljoin(self.base_url, href), listing_type,
                                            snippet=art.get_text(" ", strip=True)[:800]))
-        return list(hits.values()) or super().search_hits(html, page_url, listing_type)
+        if hits:
+            return list(hits.values())
+        # Layout geändert? Inserats-Links suchen und den Text ihrer Kachel als Kurzinfo nehmen,
+        # damit die Vorsortierung nach PLZ weiter funktioniert.
+        for a in soup.find_all("a", href=True):
+            m = re.search(self.link_pattern, a["href"])
+            if not m:
+                continue
+            url = urljoin(self.base_url, a["href"].split("#")[0])
+            if is_http(url):
+                aid = m.group(1)
+                same = lambda h, aid=aid: f"/{aid}-" in h or "/s-anzeige/" not in h
+                hits.setdefault(aid, SearchHit(aid, url, listing_type, snippet=card_snippet(a, same)))
+        return list(hits.values())
 
     def parse_detail(self, html: str, hit: SearchHit) -> RawListing:
         soup = clean_soup(html)
