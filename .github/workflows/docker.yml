@@ -2,7 +2,7 @@ name: Docker-Image
 
 on:
   push:
-    paths: ["fernimmo/**", "Dockerfile", "requirements.txt", "deploy/docker-entrypoint.sh", ".github/workflows/docker.yml"]
+    paths: ["fernimmo/**", "Dockerfile", "requirements.txt", "deploy/docker-entrypoint.sh", "deploy/config.nas.yaml", ".github/workflows/docker.yml"]
   workflow_dispatch:
 
 permissions:

@@ -82,19 +82,19 @@ für Intel- und ARM-Modelle). Das NAS muss nichts selbst bauen.
   - Name: `GitHub`, Registry URL: `ghcr.io`
   - *Authentication* an, Username: dein GitHub-Benutzername, Password: das Token
 
-**2. Ordner und Konfiguration auf dem NAS**
-- Im ADM-Dateimanager den Ordner `Docker/fernimmo` anlegen (also `/volume1/Docker/fernimmo`), darin den
-  Unterordner `data`. Gibt es keine Freigabe „Docker“, einen anderen Ort nehmen und die Pfade im Stack anpassen.
-- `config.example.yaml` aus dem Repo herunterladen, als `config.yaml` in diesen Ordner legen und anpassen
-  (Such-URLs, `web.public_url`, z. B. `http://192.168.178.20:18451`). Passwörter **nicht** hier eintragen,
-  die kommen als Umgebungsvariablen in Portainer.
+**2. Ordner auf dem NAS**
+- Im ADM-Dateimanager unter `Dockerdaten` den Ordner `FernImmo` mit den Unterordnern `config` und `data`
+  anlegen (also `/volume1/Dockerdaten/FernImmo/config` und `.../data`).
+- `config.yaml` musst du nicht selbst anlegen: Beim ersten Start legt FernImmo eine Vorlage in `config`.
 
 **3. Stack anlegen**
 - Portainer → **Stacks → Add stack**, Name `fernimmo`, *Web editor*.
 - Inhalt von `deploy/portainer-stack.yml` einfügen.
-- Unten bei **Environment variables** eintragen: `WEB_PASSWORD` (Pflicht), optional `TELEGRAM_ENABLED=true`,
+- Unten bei **Environment variables**: `WEB_PASSWORD` (Pflicht), optional `TELEGRAM_ENABLED=true`,
   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
-- **Deploy the stack**. Danach im Browser `http://<NAS-IP>:18451` öffnen, Benutzer `ich` und dein Passwort.
+- **Deploy the stack**. Danach `http://<NAS-IP>:18451` öffnen, Benutzer `ich` und dein Passwort.
+- `config/config.yaml` im Dateimanager öffnen, `public_url` auf `http://<NAS-IP>:18451` und die Such-URLs
+  anpassen, dann in Portainer Containers → fernimmo → **Restart**.
 
 **4. Updates**
 - Stacks → fernimmo → **Editor** → *Update the stack* mit **Re-pull image and redeploy**.
@@ -103,7 +103,7 @@ für Intel- und ARM-Modelle). Das NAS muss nichts selbst bauen.
 **Tipps**
 - Port 18451 belegt? Im Stack links einen anderen Port wählen, z. B. `"18452:8080"`, und `public_url` anpassen.
 - Logs: Containers → fernimmo → *Logs*. Testnachricht: Containers → fernimmo → *Console* →
-  `python -m fernimmo -c /app/config.yaml test-notify`.
+  `python -m fernimmo test-notify`.
 - Für die Android-App die Adresse `http://<NAS-IP>:18451` eintragen; das Handy erreicht sie über WireGuard.
 
 ## Ohne Docker

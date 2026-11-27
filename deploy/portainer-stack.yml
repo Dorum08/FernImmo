@@ -1,21 +1,23 @@
-# FernImmo als Portainer-Stack (z. B. auf einem Asustor-NAS).
-# In Portainer: Stacks → Add stack → Web editor → diesen Inhalt einfügen.
-# Vorher den Ordner /volume1/Docker/fernimmo mit config.yaml anlegen (Vorlage: deploy/config.nas.yaml).
+# FernImmo als Portainer-Stack (Asustor-NAS), im Schema /volume1/Dockerdaten/<App>/<Ordner>.
+# Portainer: Stacks → Add stack → Web editor → einfügen, Umgebungsvariable WEB_PASSWORD setzen.
+# Die Ordner unter /volume1/Dockerdaten/FernImmo vorher anlegen; config.yaml entsteht beim
+# ersten Start automatisch als Vorlage im Ordner "config".
+version: '3'
 services:
   fernimmo:
-    image: ghcr.io/dorum08/fernimmo:latest
     container_name: fernimmo
-    restart: unless-stopped
-    environment:
-      TZ: Europe/Berlin
-      WEB_PASSWORD: ${WEB_PASSWORD}
-      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-false}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      NTFY_ENABLED: ${NTFY_ENABLED:-false}
-      NTFY_TOPIC: ${NTFY_TOPIC:-}
-    volumes:
-      - /volume1/Docker/fernimmo/config.yaml:/app/config.yaml:ro
-      - /volume1/Docker/fernimmo/data:/app/data
+    hostname: fernimmo
+    image: ghcr.io/dorum08/fernimmo:latest
     ports:
-      - "18451:8080"  # im ganzen Heimnetz unter http://<NAS-IP>:18451 erreichbar (links ggf. anderen Port wählen)
+      - "18451:8080" # Weboberfläche im Heimnetz: http://<NAS-IP>:18451
+    volumes:
+      - /volume1/Dockerdaten/FernImmo/config:/app/config # config.yaml (wird beim ersten Start angelegt)
+      - /volume1/Dockerdaten/FernImmo/data:/app/data # Datenbank und tägliche Sicherungen (data/backups)
+    environment:
+      - TZ=Europe/Berlin
+      - FERNIMMO_CONFIG=/app/config/config.yaml
+      - WEB_PASSWORD=${WEB_PASSWORD}
+      - TELEGRAM_ENABLED=${TELEGRAM_ENABLED:-false}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+    restart: unless-stopped
