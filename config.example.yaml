@@ -23,7 +23,7 @@ sources:
   kleinanzeigen:
     enabled: true
     urls:
-      - url: https://www.kleinanzeigen.de/s-wohnung-kaufen/nuernberg/anzeige:angebote/c196l976
+      - url: https://www.kleinanzeigen.de/s-wohnung-kaufen/nuernberg/anzeige:angebote/c196l6810
         type: kauf
     max_pages: 3
     max_details_per_run: 40   # max. neue Detailseiten pro Lauf
@@ -85,7 +85,7 @@ sources:
   #   type: kleinanzeigen
   #   vergleichsmieten: true
   #   urls:
-  #     - url: https://www.kleinanzeigen.de/s-wohnung-mieten/nuernberg/anzeige:angebote/c203l976
+  #     - url: https://www.kleinanzeigen.de/s-wohnung-mieten/nuernberg/anzeige:angebote/c203l6810
   #       type: miete
   #   max_details_per_run: 20
 

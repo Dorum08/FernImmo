@@ -6,6 +6,7 @@ import re
 import random
 import threading
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from .config import Config
@@ -47,6 +48,21 @@ def prefiltered(hit: SearchHit, searches: list[Search]) -> bool:
     if len(set(re.findall(r"(\d{1,3}(?:\.\d{3})+|\d{5,7})(?:,\d+)?\s*(?:€|eur)", snip, re.I))) > 1:
         data["purchase_price"] = data["price_generic"] = data["rent_cold"] = None
     return match_all(searches, hit.listing_type, data, hit.snippet).level == "none"
+
+
+def outside_note(outside: list[str], checked: int, prefiltered: int, new: int) -> str | None:
+    """Warnt, wenn eine Suchseite (fast) nur Inserate außerhalb aller Suchgebiete liefert –
+    typisch für eine falsche Ortskennung in der URL."""
+    if checked >= 5 and len(outside) >= 0.9 * checked:
+        common = Counter(p[:3] for p in outside if p != "?").most_common(3)
+        where = ", ".join(f"{p}xx" for p, _ in common)
+        return (f"{len(outside)} von {checked} neuen Inseraten liegen außerhalb aller Suchgebiete"
+                + (f" (v. a. PLZ {where})" if where else "")
+                + " – stimmt der Ort in der Suchseiten-URL der config.yaml?")
+    if new >= 10 and prefiltered >= 0.9 * new and checked == 0:
+        return (f"{prefiltered} von {new} neuen Inseraten schon in der Ergebnisliste aussortiert"
+                " – stimmt der Ort in der Suchseiten-URL der config.yaml?")
+    return None
 
 
 def evaluate(raw: RawListing, cfg: Config, geocoder: Geocoder | None = None,
@@ -91,7 +107,9 @@ def evaluate(raw: RawListing, cfg: Config, geocoder: Geocoder | None = None,
 
 def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -> dict:
     started = now()
-    stats = {"found": 0, "new": 0, "matches": 0, "error": None}
+    stats = {"found": 0, "new": 0, "matches": 0, "error": None, "note": None}
+    outside: list[str] = []     # PLZ neuer Inserate, die in keinem Suchgebiet liegen
+    checked = 0
     fetcher = make_fetcher(scfg.get("fetcher", cfg.fetcher), cfg.delay, cfg.user_agent, cfg.proxy)
     geocoder = Geocoder(db, cfg.geocoding)
     searches = load_searches(db)
@@ -138,6 +156,11 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
                                and c["direction"] == "down"), None)
             if is_new:
                 stats["new"] += 1
+                areas = [s.area for s in searches if s.area is not None and s.area.active]
+                if areas and not scfg.get("vergleichsmieten"):
+                    checked += 1
+                    if all(a.check(listing.data) is False for a in areas):
+                        outside.append(listing.data.get("plz") or "?")
             if row.get("status") == "ausgeblendet":
                 continue
             # Preissenkung: bei gemeldeten Treffern und bei gelikten Wohnungen (auch ohne Treffer)
@@ -164,6 +187,9 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
             )
         cutoff = (datetime.now(timezone.utc) - timedelta(days=int(scfg.get("inactive_after_days", 7)))).isoformat(timespec="seconds")
         db.mark_inactive(src.name, cutoff)
+        stats["note"] = outside_note(outside, checked, stats["prefiltered"], len(new_hits))
+        if stats["note"]:
+            log.warning("[%s] %s", name, stats["note"])
     except BlockedError as e:
         stats["error"] = f"{e} – evtl. fetcher: playwright, längere Pausen oder seltener abfragen"
         log.error("[%s] %s", name, stats["error"])
@@ -172,7 +198,8 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
         log.exception("[%s] Lauf fehlgeschlagen", name)
     finally:
         fetcher.close()
-        db.log_run(name, started, stats["found"], stats["new"], stats["matches"], stats["error"])
+        db.log_run(name, started, stats["found"], stats["new"], stats["matches"], stats["error"],
+                   stats["note"])
     log.info("[%s] gefunden=%d neu=%d treffer=%d", name, stats["found"], stats["new"], stats["matches"])
     return stats
 

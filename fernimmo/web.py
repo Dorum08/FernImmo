@@ -256,7 +256,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         plz = plz if plz.isdigit() and len(plz) <= 5 else ""
         art = art if art in ("kauf", "miete") else "kauf"
         return templates.TemplateResponse(request, "market.html", {
-            "user": user, "plz": plz, "art": art, "table": db.market_table(),
+            "user": user, "plz": plz, "art": art, "table": db.market_table(plz_prefix=plz),
             "trend_all": db.price_trend(art), "trend_plz": db.price_trend(art, plz) if plz else [],
         })
 

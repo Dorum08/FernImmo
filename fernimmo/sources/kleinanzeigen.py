@@ -19,7 +19,7 @@ class Kleinanzeigen(Source):
     def page_url(self, url: str, page: int) -> str | None:
         if page == 1:
             return url
-        # .../s-wohnung-mieten/nuernberg/c203l976 -> .../s-wohnung-mieten/nuernberg/seite:2/c203l976
+        # .../s-wohnung-mieten/nuernberg/c203l6810 -> .../s-wohnung-mieten/nuernberg/seite:2/c203l6810
         url = re.sub(r"/seite:\d+", "", url)
         head, _, last = url.rstrip("/").rpartition("/")
         return f"{head}/seite:{page}/{last}"

@@ -142,3 +142,15 @@ def test_umgebung_api(tmp_path, monkeypatch):
     assert j["categories"]["einkaufen"]["items"][0]["name"] == "Bäcker"
     c.get(f"/api/listing/{i['111']}/umgebung", auth=A)
     assert len(calls) == 1                                                  # zweiter Aufruf aus dem Speicher
+
+
+def test_outside_note_and_market_filter(tmp_path, monkeypatch):
+    from fernimmo.pipeline import outside_note
+    assert outside_note(["51147"] * 9, 10, 0, 10).startswith("9 von 10")
+    assert "511xx" in outside_note(["51147"] * 9, 10, 0, 10)
+    assert outside_note(["51147"] * 2, 10, 0, 10) is None
+    assert outside_note([], 0, 38, 40) is not None and outside_note([], 0, 2, 40) is None
+    cfg, db, c = setup(tmp_path, monkeypatch)
+    assert all(r["plz"].startswith("904") for r in db.market_table(plz_prefix="904"))
+    assert db.market_table(plz_prefix="511") == []
+    assert c.get("/runs", auth=A).status_code == 200

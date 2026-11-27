@@ -142,7 +142,8 @@ CREATE TABLE IF NOT EXISTS geocache (
 """
 
 # Spalten, die nachträglich dazugekommen sind (Migration bestehender Datenbanken)
-MIGRATIONS = {"areas": {"center_lat": "REAL", "center_lon": "REAL", "radius_km": "REAL", "search_id": "INTEGER"},
+MIGRATIONS = {"runs": {"note": "TEXT"},
+              "areas": {"center_lat": "REAL", "center_lon": "REAL", "radius_km": "REAL", "search_id": "INTEGER"},
               "listings": {
     "last_fetched": "TEXT", "lat": "REAL", "lon": "REAL", "geo_precision": "TEXT",
     "loose_fp": "TEXT", "relisted_of": "INTEGER",
@@ -622,11 +623,13 @@ class DB:
             return round(ref[0], 2), f"Median aus {ref[1]} Mietinseraten (alle PLZ)"
         return None
 
-    def market_table(self, days: int = 365) -> list[dict]:
-        """Je PLZ: Median-€/m² Kauf und Miete, Anzahl, grobe Bruttorendite."""
+    def market_table(self, days: int = 365, plz_prefix: str = "") -> list[dict]:
+        """Je PLZ: Median-€/m² Kauf und Miete, Anzahl, grobe Bruttorendite (optional nur ein PLZ-Anfang)."""
         acc: dict[str, dict] = {}
         for lt in ("kauf", "miete"):
             for plz, v, _ in self._market_rows(lt, days):
+                if plz_prefix and not (plz or "").startswith(plz_prefix):
+                    continue
                 acc.setdefault(plz or "?", {"kauf": [], "miete": []})[lt].append(v)
         out = []
         for plz, d in acc.items():
@@ -825,10 +828,11 @@ class DB:
         return self._exec("DELETE FROM comments WHERE id=? AND user=?", (cid, user)).rowcount > 0
 
     # ------------------------------------------------------------------ runs
-    def log_run(self, source: str, started: str, found: int, new: int, matches: int, error: str | None) -> None:
+    def log_run(self, source: str, started: str, found: int, new: int, matches: int, error: str | None,
+                note: str | None = None) -> None:
         self._exec(
-            "INSERT INTO runs(started, finished, source, found, new, matches, error) VALUES (?,?,?,?,?,?,?)",
-            (started, now(), source, found, new, matches, error),
+            "INSERT INTO runs(started, finished, source, found, new, matches, error, note) VALUES (?,?,?,?,?,?,?,?)",
+            (started, now(), source, found, new, matches, error, note),
         )
 
     def last_runs(self, source: str, n: int) -> list[dict]:
