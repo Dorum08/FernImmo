@@ -40,8 +40,11 @@ class Kleinanzeigen(Source):
             aid = art["data-adid"]
             if not is_http(urljoin(self.base_url, href)):
                 continue
-            hits.setdefault(aid, SearchHit(aid, urljoin(self.base_url, href), listing_type,
-                                           snippet=art.get_text(" ", strip=True)[:800]))
+            # Ort (PLZ) zuerst, damit er nie hinter einem langen Beschreibungsanriss abgeschnitten wird
+            loc = art.select_one(".aditem-main--top--left, [class*='aditem-main--top--left'], [class*='location']")
+            text = art.get_text(" ", strip=True)
+            snippet = (f"{loc.get_text(' ', strip=True)} · " if loc else "") + text
+            hits.setdefault(aid, SearchHit(aid, urljoin(self.base_url, href), listing_type, snippet=snippet[:1000]))
         if hits:
             return list(hits.values())
         # Layout geändert? Inserats-Links suchen und den Text ihrer Kachel als Kurzinfo nehmen,

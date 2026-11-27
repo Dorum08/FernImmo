@@ -74,6 +74,12 @@ def main(argv: list[str] | None = None) -> int:
         from .web import create_app
         from .searches import ensure_searches
         ensure_searches(cfg, db)          # vor dem Start von Suchlauf und Weboberfläche
+        from .extract import EXTRACT_VERSION
+        if db.get_setting("extract_version") != EXTRACT_VERSION:
+            from .pipeline import reprocess
+            n = reprocess(cfg, db)        # verbesserte Erkennung auf gespeicherte Inserate anwenden
+            db.set_setting("extract_version", EXTRACT_VERSION)
+            logging.getLogger("fernimmo").info("Erkennung aktualisiert: %d Inserate neu ausgewertet", n)
         scheduler = Scheduler(cfg, db, notifier)
         scheduler.start()
         tg = cfg.notify.get("telegram") or {}

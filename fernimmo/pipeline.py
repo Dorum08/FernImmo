@@ -50,6 +50,12 @@ def prefiltered(hit: SearchHit, searches: list[Search]) -> bool:
     return match_all(searches, hit.listing_type, data, hit.snippet).level == "none"
 
 
+def in_some_area(hit: SearchHit, searches: list[Search]) -> bool:
+    """True, wenn die PLZ aus der Ergebniskachel sicher in einem Suchgebiet liegt."""
+    plz = extract(hit.snippet or "").get("plz") if hit.snippet else None
+    return bool(plz) and any(s.area is not None and s.area.active and s.area.check({"plz": plz}) for s in searches)
+
+
 def outside_note(outside: list[str], checked: int, prefiltered: int, new: int) -> str | None:
     """Warnt, wenn eine Suchseite (fast) nur Inserate außerhalb aller Suchgebiete liefert –
     typisch für eine falsche Ortskennung in der URL."""
@@ -131,6 +137,8 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
         stats["prefiltered"] = len(new_hits) - len(todo)
         todo_ids = {h.source_id for h in todo}
         db.add_skipped(src.name, [h.source_id for h in new_hits if h.source_id not in todo_ids])
+        # Was laut Kachel sicher im Suchgebiet liegt, zuerst öffnen – Unklares danach
+        todo.sort(key=lambda h: 0 if in_some_area(h, searches) else 1)
         todo = todo[: src.max_details]
         # Bekannte Treffer und gelikte Inserate regelmäßig neu laden, damit
         # Änderungen (Preis, Beschreibung, offline …) im Verlauf landen.
@@ -198,9 +206,11 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
             db.mark_inactive(src.name, cutoff)
         # Bei bundesweiten Feeds liegt fast alles außerhalb – dort ist das gewollt
         stats["note"] = None if is_feed else outside_note(outside, checked, stats["prefiltered"], len(new_hits))
-        if is_feed and len(new_hits) >= 20 and not any(extract(h.snippet or "").get("plz") for h in new_hits):
-            stats["note"] = ("Ergebnisliste ohne erkennbare PLZ – Vorsortierung nach Suchgebiet nicht möglich, "
-                             f"es werden nur die neuesten {src.max_details} Inserate je Lauf geöffnet")
+        if is_feed and new_hits:
+            with_plz = sum(1 for h in new_hits if extract(h.snippet or "").get("plz"))
+            if with_plz < 0.5 * len(new_hits):
+                stats["note"] = (f"Nur {with_plz} von {len(new_hits)} Kacheln mit erkennbarer PLZ – Vorsortierung nach "
+                                 f"Suchgebiet kaum möglich, je Lauf werden höchstens {src.max_details} Inserate geöffnet")
         if stats["note"]:
             log.warning("[%s] %s", name, stats["note"])
     except BlockedError as e:

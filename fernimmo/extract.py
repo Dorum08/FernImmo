@@ -14,6 +14,9 @@ SEP = r"\s*(?:[:\-–]\s*)?(?:ca\.?\s*|circa\s*|rd\.?\s*)?"
 EUR = r"\s*(?:€|eur\b|euro\b)"
 
 # Energieträger -> Schlüsselwörter (Reihenfolge ist egal, es werden alle gesammelt)
+# Bei Änderungen an der Erkennung erhöhen: beim nächsten Start werden alle Inserate neu ausgewertet
+EXTRACT_VERSION = 2
+
 HEATING_KEYWORDS: dict[str, list[str]] = {
     "fernwaerme": [
         r"fernw(?:ä|ae)rme", r"fernheiz", r"fern-\s*/\s*nahw", r"nah-\s*/\s*fernw",
@@ -69,6 +72,20 @@ EXCLUDE_HINTS = {
     "provisionsfrei": r"provisionsfrei|ohne makler|keine k(?:ä|ae)uferprovision|von privat",
     "denkmal": r"denkmalschutz|denkmalgesch(?:ü|ue)tzt|baudenkmal",
 }
+
+AUCTION_TERMS = (r"zwangsversteigerung", r"versteigerungstermin", r"amtsgericht", r"verkehrswert",
+                 r"aktenzeichen", r"\bgebot", r"bieterverfahren", r"\bversteigerung")
+
+
+def is_auction(title: str, low: str) -> bool:
+    """Versteigerung nur, wenn der Titel sie nennt oder der Text mehrere typische Begriffe enthält.
+    Ein einzelnes Wort aus Menü/Fußzeile eines Portals („Zwangsversteigerungen“) oder
+    „keine Versteigerung“ zählt nicht."""
+    if re.search(r"versteigerung|auktion", title, re.IGNORECASE):
+        return True
+    cleaned = re.sub(r"\b(?:keine?|kein|nicht|ohne)\s+(?:\w+\s+){0,2}\w*versteigerung\w*", " ", low)
+    return sum(1 for t in AUCTION_TERMS if re.search(t, cleaned)) >= 2
+
 
 FLOOR_WORDS = {
     "souterrain": -1, "untergeschoss": -1, "ug": -1,
@@ -270,6 +287,8 @@ def extract(text: str, title: str = "", structured: dict[str, str] | None = None
     # --- Ausstattung & Hinweise --------------------------------------------
     d["features"] = sorted(k for k, p in FEATURES.items() if re.search(p, low))
     flags = {k for k, p in EXCLUDE_HINTS.items() if re.search(p, low)}
+    if "versteigerung" in flags and not is_auction(title, low):
+        flags.discard("versteigerung")
     if re.match(r"\s*(?:suche|gesucht|wir suchen|ich suche)\b", title, re.IGNORECASE):
         flags.add("gesuch")
     d["flags"] = sorted(flags)
