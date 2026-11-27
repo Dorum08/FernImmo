@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import time
 
@@ -96,14 +97,25 @@ class PlaywrightFetcher(Fetcher):
 
     def __init__(self, delay: tuple[float, float] = (4.0, 9.0), user_agent: str | None = None,
                  headless: bool = True, proxy: str | None = None):
-        from playwright.sync_api import sync_playwright  # lazy import
+        try:
+            from playwright.sync_api import sync_playwright  # lazy import
+        except ImportError:
+            raise RuntimeError("Browser-Abruf (fetcher: playwright) braucht das Docker-Image "
+                               "ghcr.io/dorum08/fernimmo:browser") from None
 
         self.delay = delay
         self._pw = sync_playwright().start()
-        launch_args = {"headless": headless}
+        # Im Container: kleiner gemeinsamer Speicher (/dev/shm) und keine Chromium-Sandbox möglich
+        launch_args: dict = {"headless": headless, "args": ["--disable-dev-shm-usage", "--no-sandbox"]}
+        if os.environ.get("FERNIMMO_CHROMIUM_PATH"):
+            launch_args["executable_path"] = os.environ["FERNIMMO_CHROMIUM_PATH"]
         if proxy:
             launch_args["proxy"] = {"server": proxy}
-        self.browser = self._pw.chromium.launch(**launch_args)
+        try:
+            self.browser = self._pw.chromium.launch(**launch_args)
+        except Exception:
+            self._pw.stop()
+            raise
         self.context = self.browser.new_context(
             user_agent=user_agent or DEFAULT_UA, locale="de-DE", viewport={"width": 1366, "height": 900},
         )

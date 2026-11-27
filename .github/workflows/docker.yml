@@ -31,5 +31,31 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=standard
+          cache-to: type=gha,scope=standard,mode=max
+
+  # Variante mit eingebautem Chromium für Portale, die einfache Abrufe sperren (fetcher: playwright)
+  image-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Image-Name (Kleinbuchstaben)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: PLAYWRIGHT=1
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:browser
+            ${{ env.IMAGE }}:browser-${{ github.sha }}
+          cache-from: type=gha,scope=browser
+          cache-to: type=gha,scope=browser,mode=max

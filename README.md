@@ -100,6 +100,18 @@ für Intel- und ARM-Modelle). Das NAS muss nichts selbst bauen.
 - Stacks → fernimmo → **Editor** → *Update the stack* mit **Re-pull image and redeploy**.
   Datenbank, Suchen und Likes liegen in `data/` und bleiben erhalten; Sicherungen in `data/backups/`.
 
+**Browser-Variante (für Immowelt & Co.)**
+Manche Portale sperren den einfachen Abruf (Fehler „Blockiert (403)“ unter *Suchläufe*). Dann kann FernImmo die
+Seiten in einem unsichtbaren Chromium laden:
+- Im Stack das Image auf `ghcr.io/dorum08/fernimmo:browser` ändern (größer, ca. 1 GB) und *Update the stack*.
+- In `config/config.yaml` beim betroffenen Portal `fetcher: playwright` eintragen, z. B.
+  ```yaml
+  immowelt:
+    fetcher: playwright
+    urls: …
+  ```
+- Container neu starten. Garantiert ist das nicht: Auch echte Browser werden von manchen Schutzsystemen erkannt.
+
 **Tipps**
 - Port 18451 belegt? Im Stack links einen anderen Port wählen, z. B. `"18452:8080"`, und `public_url` anpassen.
 - Logs: Containers → fernimmo → *Logs*. Testnachricht: Containers → fernimmo → *Console* →

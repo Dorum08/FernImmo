@@ -14,6 +14,7 @@ sources:
       - url: https://www.kleinanzeigen.de/s-wohnung-kaufen/nuernberg/anzeige:angebote/c196l976
         type: kauf
   immowelt:
+    # fetcher: playwright      # echter Browser – nur mit dem Image ghcr.io/dorum08/fernimmo:browser
     urls:
       - url: https://www.immowelt.de/classified-search?distributionTypes=Buy&estateTypes=Apartment&locations=AD08DE6345&numberOfRoomsMax=2
         type: kauf
