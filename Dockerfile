@@ -11,7 +11,11 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt \
- && if [ "$PLAYWRIGHT" = "1" ]; then pip install playwright && playwright install --with-deps chromium; fi
+ && if [ "$PLAYWRIGHT" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends libatomic1 \
+      && pip install playwright && playwright install --with-deps chromium \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 COPY fernimmo ./fernimmo
 
