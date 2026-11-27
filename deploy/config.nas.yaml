@@ -10,9 +10,10 @@ map_zoom: 11
 
 sources:
   kleinanzeigen:
-    urls:
-      - url: https://www.kleinanzeigen.de/s-wohnung-kaufen/nuernberg/anzeige:angebote/c196l6810
-        type: kauf
+    # Ohne urls: bundesweit, neueste zuerst. Passt automatisch zu allen Suchen in der
+    # Weboberfläche – Inserate außerhalb deiner Suchgebiete werden vorab aussortiert.
+    max_pages_first_run: 20   # beim ersten Lauf / nach geänderter Suche so weit zurückblättern
+    max_pages_feed: 10        # sonst höchstens so viele Seiten, bis wieder Bekanntes kommt
   immowelt:
     # fetcher: playwright      # echter Browser – nur mit dem Image ghcr.io/dorum08/fernimmo:browser
     urls:

@@ -118,13 +118,19 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
         src = build_source(name, scfg, fetcher)
         known = db.known_ids(src.name)
         first_run = not known
-        hits = src.search()
+        db.clear_skipped(older_than=(datetime.now(timezone.utc) - timedelta(days=60)).isoformat(timespec="seconds"))
+        skipped = db.skipped_ids(src.name)
+        # Leere Liste = erster Lauf oder Suche geändert -> Feeds weiter zurück durchsehen
+        hits = src.search(known | skipped, backfill=not skipped)
+        is_feed = any(f for _, _, f in src.search_entries())
         stats["found"] = len(hits)
         db.touch(src.name, [h.source_id for h in hits if h.source_id in known])
-        new_hits = [h for h in hits if h.source_id not in known]
+        new_hits = [h for h in hits if h.source_id not in known and h.source_id not in skipped]
         # Quellen nur für Vergleichsmieten werden nie vorab aussortiert (sie treffen keine Kaufsuche)
         todo = [h for h in new_hits if scfg.get("vergleichsmieten") or not prefiltered(h, searches)]
         stats["prefiltered"] = len(new_hits) - len(todo)
+        todo_ids = {h.source_id for h in todo}
+        db.add_skipped(src.name, [h.source_id for h in new_hits if h.source_id not in todo_ids])
         todo = todo[: src.max_details]
         # Bekannte Treffer und gelikte Inserate regelmäßig neu laden, damit
         # Änderungen (Preis, Beschreibung, offline …) im Verlauf landen.
@@ -186,8 +192,12 @@ def run_source(name: str, scfg: dict, cfg: Config, db: DB, notifier: Notifier) -
                 "Diese wurden nicht einzeln gemeldet – siehe Weboberfläche. Ab jetzt kommt jedes neue Inserat einzeln.",
             )
         cutoff = (datetime.now(timezone.utc) - timedelta(days=int(scfg.get("inactive_after_days", 7)))).isoformat(timespec="seconds")
-        db.mark_inactive(src.name, cutoff)
-        stats["note"] = outside_note(outside, checked, stats["prefiltered"], len(new_hits))
+        # Feeds zeigen nur die neuesten Inserate; ältere fehlen dort, sind aber nicht offline.
+        # Ob sie noch online sind, klärt dann das regelmäßige Neuladen der Detailseite.
+        if not is_feed:
+            db.mark_inactive(src.name, cutoff)
+        # Bei bundesweiten Feeds liegt fast alles außerhalb – dort ist das gewollt
+        stats["note"] = None if is_feed else outside_note(outside, checked, stats["prefiltered"], len(new_hits))
         if stats["note"]:
             log.warning("[%s] %s", name, stats["note"])
     except BlockedError as e:

@@ -272,12 +272,18 @@ Wohnung kaufen, möglichst „neueste zuerst“), die URL aus der Adresszeile in
 mit `python -m fernimmo check <Inserat-URL> --source <name>` prüfen. Ohne URL ist
 ein Portal aus. Mehrere URLs pro Portal (z. B. mehrere Städte) sind möglich.
 
-**Deutschlandweit suchen:** Bei Kleinanzeigen etwa die bundesweite Kategorie
-„Wohnung kaufen“, sortiert nach neuesten. Damit nicht jedes Inserat einzeln geöffnet
-werden muss, prüft FernImmo schon die Kurzinfo in der Ergebnisliste (PLZ, Zimmer)
-gegen Suchgebiet und Kriterien und lädt nur Detailseiten, die passen könnten.
-Bundesweite Listen ändern sich schnell; je kleiner die Region in der Such-URL,
-desto weniger Inserate verpasst FernImmo zwischen zwei Läufen.
+**Deutschlandweit suchen:** Steht bei Kleinanzeigen keine URL in der `config.yaml`,
+liest FernImmo die bundesweite Liste „Wohnung kaufen“ (neueste zuerst) als **Feed**:
+Bei jedem Lauf wird nur so weit geblättert, bis wieder bekannte Inserate kommen.
+Die Kurzinfo jeder Kachel (PLZ, Zimmer, Preis) wird gegen alle Suchen geprüft; nur
+was in ein Suchgebiet fallen könnte, wird geöffnet. Damit funktioniert jede Suche,
+die du in der Weboberfläche anlegst – egal ob Nürnberg, Hamburg oder ein Umkreis
+irgendwo in Deutschland – ohne die config.yaml anzufassen.
+
+Grenze: Der Feed sieht nur, was neu eingestellt wird. Legst du eine Suche neu an
+oder änderst sie, blättert FernImmo einmal weiter zurück (`max_pages_first_run`,
+Standard 20 Seiten ≈ 500 Inserate bzw. etwa ein bis zwei Tage). Ältere Inserate einer
+Region bekommst du zusätzlich mit einer regionalen Such-URL (siehe config.example.yaml).
 
 ## Grenzen und Hinweise
 

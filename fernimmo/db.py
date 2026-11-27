@@ -94,6 +94,12 @@ CREATE TABLE IF NOT EXISTS tags (
     tag TEXT NOT NULL,
     PRIMARY KEY (listing_id, tag)
 );
+CREATE TABLE IF NOT EXISTS skipped (
+    source TEXT,
+    source_id TEXT,
+    ts TEXT,
+    PRIMARY KEY (source, source_id)
+);
 CREATE TABLE IF NOT EXISTS poi_cache (
     listing_id INTEGER PRIMARY KEY,
     lat REAL, lon REAL,
@@ -432,6 +438,24 @@ class DB:
             self._exec("UPDATE listings SET active=0, last_fetched=? WHERE id=?", (now(), lid))
             self.add_change(lid, "offline", "Status", "online", reason)
 
+    # Vorab (anhand der Ergebniskachel) aussortierte Inserate – damit bundesweite Feeds
+    # wissen, wo sie aufhören können. Ändert sich eine Suche, wird die Liste geleert.
+    def skipped_ids(self, source: str) -> set[str]:
+        return {r["source_id"] for r in self._query("SELECT source_id FROM skipped WHERE source=?", (source,))}
+
+    def add_skipped(self, source: str, source_ids: list[str]) -> None:
+        if source_ids:
+            with self.lock:
+                self.conn.executemany("INSERT OR IGNORE INTO skipped(source, source_id, ts) VALUES (?,?,?)",
+                                      [(source, i, now()) for i in source_ids])
+                self.conn.commit()
+
+    def clear_skipped(self, older_than: str | None = None) -> None:
+        if older_than:
+            self._exec("DELETE FROM skipped WHERE ts<?", (older_than,))
+        else:
+            self._exec("DELETE FROM skipped")
+
     def mark_inactive(self, source: str, older_than: str) -> None:
         for r in self._query("SELECT id FROM listings WHERE source=? AND active=1 AND last_seen<?",
                              (source, older_than)):
@@ -689,6 +713,7 @@ class DB:
     def add_area(self, kind: str, name: str, geometry: dict, user: str,
                  center: tuple[float, float] | None = None, radius_km: float | None = None,
                  search_id: int | None = None) -> int:
+        self.clear_skipped()
         return self._exec(
             """INSERT INTO areas(kind, name, geometry, created, created_by, center_lat, center_lon, radius_km,
                search_id) VALUES (?,?,?,?,?,?,?,?,?)""",
@@ -717,6 +742,7 @@ class DB:
         return next((s for s in self.searches() if s["id"] == sid), None)
 
     def add_search(self, name: str, criteria: dict, plz: list[str], user: str) -> int:
+        self.clear_skipped()
         pos = (self._query("SELECT COALESCE(MAX(position), 0) + 1 p FROM searches")[0]["p"])
         return self._exec(
             "INSERT INTO searches(name, position, criteria, plz, created, created_by) VALUES (?,?,?,?,?,?)",
@@ -726,6 +752,8 @@ class DB:
         cols = {k: (json.dumps(v) if k in ("criteria", "plz") else v) for k, v in fields.items()
                 if k in ("name", "active", "notify", "criteria", "plz", "position")}
         if cols:
+            if set(cols) & {"active", "criteria", "plz"}:
+                self.clear_skipped()
             self._exec(f"UPDATE searches SET {', '.join(f'{k}=?' for k in cols)} WHERE id=?",
                        (*cols.values(), sid))
 
@@ -745,6 +773,7 @@ class DB:
         self._exec("UPDATE areas SET name=? WHERE id=?", (name[:100], aid))
 
     def delete_area(self, aid: int) -> bool:
+        self.clear_skipped()
         return self._exec("DELETE FROM areas WHERE id=?", (aid,)).rowcount > 0
 
     def get_setting(self, key: str, default: Any = None) -> Any:

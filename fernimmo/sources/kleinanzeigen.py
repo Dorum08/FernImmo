@@ -16,6 +16,11 @@ class Kleinanzeigen(Source):
     base_url = "https://www.kleinanzeigen.de"
     link_pattern = r"/s-anzeige/[^\"'?#]+/(\d+)-\d+-\d+"
 
+    def default_urls(self) -> list:
+        # Bundesweit, neueste zuerst: deckt jede Suche ab, egal wo ihr Gebiet liegt.
+        # Die PLZ in der Ergebniskachel sortiert alles außerhalb der Suchgebiete vorab aus.
+        return [{"url": f"{self.base_url}/s-wohnung-kaufen/anzeige:angebote/c196", "type": "kauf", "feed": True}]
+
     def page_url(self, url: str, page: int) -> str | None:
         if page == 1:
             return url

@@ -13,19 +13,25 @@ fetch:
   # proxy: http://user:pass@host:port
 
 # ---------------------------------------------------------------------------
-# Quellen. Am zuverlässigsten: Suche im Browser auf dem Portal einstellen
-# (Nürnberg, Wohnung kaufen, ggf. Zimmer/Preis) und die URL hier
-# einfügen. Die Feinfilterung (Fernwärme etc.) macht FernImmo selbst.
-# Die Beispiel-URLs unten bitte einmal im Browser öffnen und prüfen, ob sie
-# wirklich Nürnberg zeigen (Orts-IDs der Portale ändern sich gelegentlich).
+# Quellen. Kleinanzeigen läuft ohne urls bundesweit (neueste zuerst) und passt
+# damit automatisch zu allen Suchen der Weboberfläche. Für andere Portale die
+# Suche im Browser einstellen und die URL aus der Adresszeile hier einfügen.
+# Die Feinfilterung (Gebiet, Fernwärme etc.) macht FernImmo selbst.
 # ---------------------------------------------------------------------------
 sources:
   kleinanzeigen:
     enabled: true
-    urls:
-      - url: https://www.kleinanzeigen.de/s-wohnung-kaufen/nuernberg/anzeige:angebote/c196l6810
-        type: kauf
-    max_pages: 3
+    # Ohne urls: bundesweiter Feed „Wohnung kaufen“, neueste zuerst. Wer zusätzlich eine
+    # Region vollständig (auch ältere Inserate) erfassen will, trägt deren URL ein, z. B.:
+    # urls:
+    #   - url: https://www.kleinanzeigen.de/s-wohnung-kaufen/nuernberg/anzeige:angebote/c196l6810
+    #     type: kauf
+    #   - url: https://www.kleinanzeigen.de/s-wohnung-kaufen/anzeige:angebote/c196
+    #     type: kauf
+    #     feed: true            # nur bis zu bereits bekannten Inseraten blättern
+    max_pages_first_run: 20     # Feed: beim ersten Lauf / nach geänderter Suche so weit zurück
+    max_pages_feed: 10          # Feed: sonst höchstens so viele Seiten
+    max_pages: 3                # normale (regionale) Such-URLs
     max_details_per_run: 40   # max. neue Detailseiten pro Lauf
     refresh_hours: 6          # Treffer/gelikte Inserate spätestens alle 6 h neu laden (Änderungsverlauf)
     refresh_per_run: 15       # höchstens so viele Neu-Abrufe pro Lauf

@@ -56,8 +56,10 @@ class Config:
         self.user_agent: str | None = f.get("user_agent")
         self.proxy: str | None = f.get("proxy") or None
         self.sources: dict[str, dict] = {
-            k: v for k, v in (raw.get("sources") or {}).items()
-            if v and _bool(v.get("enabled", True)) and v.get("urls")   # ohne Such-URL kein Abruf
+            k: v or {} for k, v in (raw.get("sources") or {}).items()
+            if _bool((v or {}).get("enabled", True))
+            # ohne Such-URL kein Abruf – außer Kleinanzeigen: dort gilt dann der bundesweite Feed
+            and ((v or {}).get("urls") or (v or {}).get("type", k) == "kleinanzeigen")
         }
         self.profiles: list[Profile] = [Profile.from_dict(p) for p in raw.get("profiles", [])]
         n = raw.get("notify", {}) or {}

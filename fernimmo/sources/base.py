@@ -126,12 +126,24 @@ class Source:
 
     # ---------------------------------------------------------------- search
     def search_urls(self) -> Iterable[tuple[str, str | None]]:
+        for url, ltype, _ in self.search_entries():
+            yield url, ltype
+
+    def default_urls(self) -> list:
+        """Suchseiten, wenn in der config.yaml keine stehen (z. B. bundesweiter Neueste-Feed)."""
+        return []
+
+    def search_entries(self) -> Iterable[tuple[str, str | None, bool]]:
+        """(URL, Vermarktungsart, Feed?) – ein Feed ist eine nach Datum sortierte, meist bundesweite
+        Liste; sie wird nur so weit gelesen, bis wieder bekannte Inserate kommen."""
         default = self.cfg.get("type_default")
-        for entry in self.cfg.get("urls", []):
+        feed_default = bool(self.cfg.get("feed", False))
+        for entry in self.cfg.get("urls") or self.default_urls():
             if isinstance(entry, dict):
-                yield entry["url"], entry.get("type") or default or guess_type(entry["url"])
+                yield (entry["url"], entry.get("type") or default or guess_type(entry["url"]),
+                       bool(entry.get("feed", feed_default)))
             else:
-                yield entry, default or guess_type(entry)
+                yield entry, default or guess_type(entry), feed_default
 
     def page_url(self, url: str, page: int) -> str | None:
         tpl = self.cfg.get("pagination")
@@ -153,10 +165,19 @@ class Source:
                 hits.setdefault(mm.group(1), SearchHit(mm.group(1), full, listing_type))
         return list(hits.values())
 
-    def search(self) -> list[SearchHit]:
+    def search(self, known: set[str] | None = None, backfill: bool = False) -> list[SearchHit]:
+        """known: bereits gespeicherte IDs dieser Quelle. Bei Feeds wird weitergeblättert, solange
+        eine Seite noch unbekannte Inserate enthält; beim ersten Lauf oder nach einer geänderten
+        Suche (backfill) bis max_pages_first_run, sonst bis max_pages_feed."""
         all_hits: dict[str, SearchHit] = {}
-        for url, ltype in self.search_urls():
-            for page in range(1, self.max_pages + 1):
+        known = known or set()
+        for url, ltype, feed in self.search_entries():
+            pages = self.max_pages
+            if feed:
+                pages = int(self.cfg.get("max_pages_feed", 10))
+                if not known or backfill:
+                    pages = int(self.cfg.get("max_pages_first_run", 20))
+            for page in range(1, pages + 1):
                 purl = self.page_url(url, page)
                 if not purl:
                     break
@@ -173,6 +194,8 @@ class Source:
                     all_hits[h.source_id] = h
                 if not new:
                     break
+                if feed and known and not any(h.source_id not in known for h in new):
+                    break      # ab hier nur noch Bekanntes
         return list(all_hits.values())
 
     # ---------------------------------------------------------------- detail
