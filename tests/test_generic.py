@@ -137,6 +137,6 @@ def test_criteria_from_web_apply_to_matching(tmp_path, monkeypatch):
     assert "Kriterien" in page and 'value="2.5" selected' in page
     # Übersichtsfilter mit halben Zimmern
     assert [r["rooms"] for r in db.search(match=None, rooms_min=2.5)] == [3]
-    assert c.get("/?match=&rooms_min=1.5&rooms_max=2").status_code == 200
+    assert c.get("/liste?match=&rooms_min=1.5&rooms_max=2").status_code == 200
     # PLZ-Anfänge: "904" deckt "90443" ab, Doppelungen fallen weg
     assert c.patch(f"/api/searches/{sid}", json={"plz": ["904", "90443", "1"]}).json()["plz"] == ["1", "904"]

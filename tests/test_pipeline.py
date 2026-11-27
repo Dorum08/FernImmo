@@ -197,7 +197,7 @@ def test_web(tmp_path, monkeypatch):
     assert c.get("/").status_code == 401
     assert c.get("/", auth=("leer", "")).status_code == 401
     assert c.get("/", auth=("anna", "falsch")).status_code == 401
-    r = c.get("/", auth=A)
+    r = c.get("/liste", auth=A)
     assert r.status_code == 200 and "Helle 2-Zi-ETW" in r.text and "3 Zimmer" not in r.text
     lid = next(r["id"] for r in db.search(match=None) if r["source_id"] == "111")
     assert f"#{lid}" in r.text
@@ -213,7 +213,7 @@ def test_web(tmp_path, monkeypatch):
 
     # Kommentar auf der Übersicht sichtbar, mit Autor
     c.post(f"/listing/{lid}/comment", data={"text": "Lage top, <b>Preis</b> verhandeln", "back": "/"}, auth=B)
-    page = c.get("/", auth=A).text
+    page = c.get("/liste", auth=A).text
     assert "Lage top, &lt;b&gt;Preis&lt;/b&gt; verhandeln" in page   # HTML wird escaped
     assert "1 Kommentar" in page
     cid = db.get(lid)["comments"][0]["id"]
@@ -221,7 +221,7 @@ def test_web(tmp_path, monkeypatch):
     assert len(db.get(lid)["comments"]) == 1
 
     det = c.get(f"/listing/{lid}", auth=A).text
-    assert "Änderungsverlauf" in det and "erstmals gefunden" in det and "Fernwärme" in det
+    assert "Historie" in det and "erstmals gefunden" in det and "Fernwärme" in det
     r = c.post(f"/listing/{lid}/status", data={"status": "favorit"}, auth=A, follow_redirects=False)
     assert r.status_code == 303 and db.get(lid)["status"] == "favorit"
     assert c.get("/runs", auth=A).status_code == 200
@@ -316,7 +316,7 @@ def test_area_api_map_and_export(tmp_path, monkeypatch):
     assert c.get("/plz/../config.geojson").status_code == 404
     assert c.get("/plz/ab.geojson").status_code == 404
     det = c.get(f"/listing/{lid}").text
-    assert "Kostenrechner" in det and "Marktlage" in det and "minimap" in det
+    assert "Cashflow-Rechner" in det and "Bewertung" in det and "minimap" in det
     pts = c.get("/api/map?match=").json()
     assert len(pts["points"]) == 3 and pts["points"][0]["precision"] == "plz"
 
@@ -357,7 +357,7 @@ def test_radius_search_web(tmp_path, monkeypatch):
     area = db.areas("search")[0]
     assert area["radius_km"] == 1 and area["center_lat"] == 49.4486
     assert db.get(fw["id"])["match_level"] == "voll"
-    page = c.get("/?sort=distance").text
+    page = c.get("/liste?sort=distance").text
     assert "km bis Plärrer" in page
     # Kleinerer Radius: 0,3 km -> außerhalb
     c.delete(f"/api/areas/{area['id']}")

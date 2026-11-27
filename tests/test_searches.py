@@ -67,7 +67,7 @@ def test_multiple_searches_end_to_end(tmp_path, monkeypatch):
     # Filter nach Suche
     assert [r["source_id"] for r in db.search(search_id=f, match=None)] == ["333"]
     assert db.search(search_id=b, match=None) == []
-    page = c.get(f"/?search={f}&match=").text
+    page = c.get(f"/liste?search={f}&match=").text
     assert "3 Zimmer Familienwohnung" in page and "Helle 2-Zi-ETW" not in page
 
     # Pausieren nimmt die Treffer der Suche weg

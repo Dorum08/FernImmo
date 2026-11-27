@@ -16,6 +16,7 @@ CALC_DEFAULTS = {
     "notar_grundbuch_pct": 2.0,
     "makler_pct": 3.57,               # Käuferanteil inkl. MwSt.; 0 bei "provisionsfrei"
     "eigenkapital": 60000,
+    "eigenkapital_pct": 20,           # für Cashflow in Ergebnislisten (Anteil an den Gesamtkosten)
     "zins_pct": 3.6,
     "tilgung_pct": 2.0,
     "miete_pro_qm": 12.0,             # Vergleichsmiete für die Renditeschätzung – bitte anpassen
@@ -89,6 +90,10 @@ class Config:
         if "enabled" in g:
             g["enabled"] = _bool(g["enabled"])
         self.geocoding: dict[str, Any] = g
+        u = raw.get("umgebung") or {}
+        if "enabled" in u:
+            u["enabled"] = _bool(u["enabled"])
+        self.umgebung: dict[str, Any] = u      # „In der Nähe“ über OpenStreetMap/Overpass
         self.map_center: list[float] = raw.get("map_center", [51.1634, 10.4477])   # Mitte Deutschlands
         self.map_zoom: int = int(raw.get("map_zoom", 6 if "map_center" not in raw else 11))
         self.calculator: dict[str, Any] = {**CALC_DEFAULTS, **(raw.get("calculator") or {})}

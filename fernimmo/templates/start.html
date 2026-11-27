@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}FernImmo{% endblock %}
+{% block content %}
+{% set total_new = searches|sum(attribute="n_new") %}
+<section class="hero">
+  <h1>Wohnungen finden</h1>
+  <p class="muted">Alle gesammelten Inserate durchsuchen – oder direkt in deine Suchen springen.</p>
+  {% if total_new %}
+  <a class="notice" href="/suchen">ⓘ In deinen Suchen gibt es <b>{{ total_new }}</b> neue Objekte. <u>Zu Meinen Suchen</u></a>
+  {% endif %}
+</section>
+
+<form class="card quick" method="get" action="/objekte">
+  <div class="quick-row">
+    <label class="grow">Ort oder PLZ<input name="ort" placeholder="z. B. Nürnberg, Gostenhof oder 904" autofocus></label>
+    <label>Art<select name="typ"><option value="kauf">Eigentumswohnung (Kauf)</option><option value="miete">Mietwohnung</option></select></label>
+    <button class="primary big">🔍 Suchen</button>
+  </div>
+  <div class="quick-row">
+    <label class="grow">Max. Quadratmeterpreis<input name="ppsqm_max" type="number" min="0" step="100" placeholder="z. B. 5000 €/m²"></label>
+    <label class="grow">Mindestrendite (Soll)<input name="rendite_min" type="number" min="0" step="0.5" placeholder="z. B. 3 %"></label>
+    <label class="grow">Preis relativ zum Vergleichswert<select name="markt">
+      <option value="">Alle</option><option value="unter">unter Vergleichswert</option>
+      <option value="deutlich_unter">mind. 10 % darunter</option><option value="ueber">über Vergleichswert</option></select></label>
+  </div>
+</form>
+
+<h3 class="section-title">Strategie auswählen</h3>
+<div class="strategy-grid">
+  {% for key, s in strategies.items() %}
+  <a class="card strategy" href="/objekte?strategie={{ key }}">
+    <span class="st-icon">{{ s.icon }}</span>
+    <b>{{ s.name }}</b>
+    <span class="muted small">{{ s.desc }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+<h3 class="section-title">Meine Suchen</h3>
+<div class="search-cards compact">
+  {% for x in searches %}
+  <a class="card search-card {{ 'paused' if not x.active }}" href="/suchen/{{ x.id }}">
+    <div class="sc-top"><span class="sc-name">{{ x.name }}</span>{% if x.n_new %}<span class="badge new-badge">{{ x.n_new }} neu</span>{% endif %}</div>
+  </a>
+  {% endfor %}
+  <a class="card search-card add" href="/suchen">+ Suchen verwalten</a>
+</div>
+{% endblock %}

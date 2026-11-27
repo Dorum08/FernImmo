@@ -1,0 +1,92 @@
+{# Ergebnistabelle: sortierbar, Spalten wählbar (im Browser gespeichert), Vollbild,
+   neu/gesehen, Merken (♥ = Like) und Ausblenden direkt in der Zeile. #}
+{% macro results_table(rows, sum, financing, export_q, table_id="results") %}
+{% set cols = [
+  ("objekt", "Objekt", "text", true), ("quelle", "Quelle", "text", true), ("ppsqm", "Preis/m²", "num", true),
+  ("preis", "Preis", "num", true), ("ort", "Ort", "text", true), ("wfl", "Wfl.", "num", true),
+  ("zi", "Zi", "num", true), ("bj", "Bj", "num", true), ("heizung", "Heizung", "text", true),
+  ("vw", "Vergleichswert", "num", true), ("vwp", "Vergleich %", "num", true),
+  ("rendite", "Soll-Rendite", "num", false), ("ist", "Ist-Rendite", "num", false),
+  ("cashflow", "Cashflow", "num", true), ("hausgeld", "Hausgeld", "num", false),
+  ("tage", "Tage online", "num", true), ("preisaend", "Preisänderung", "num", false),
+  ("erst", "Erstmals online", "text", false), ("entf", "Entfernung", "num", false),
+  ("status", "Status", "text", false), ("tags", "Tags", "text", false)] %}
+<div class="table-tools">
+  <span class="muted">{{ sum.n }} Objekte{% if sum.new %} · <b class="new-count">{{ sum.new }} neu</b>{% endif %}</span>
+  <span class="spacer"></span>
+  {% if sum.new %}<button type="button" class="small-btn" data-act="seen-all">Alle als gesehen markieren</button>{% endif %}
+  <a class="btn-like" href="/export.xlsx?{{ export_q }}">⬇ Excel</a>
+  <a class="btn-like" href="/export.csv?{{ export_q }}">⬇ CSV</a>
+  <button type="button" class="small-btn" data-act="fullscreen">⛶ Vollbild</button>
+  <details class="col-menu">
+    <summary class="btn-like">▤ Spalten</summary>
+    <div class="col-list">
+      {% for key, label, _, on in cols %}{% if key != "objekt" %}
+      <label class="inline small"><input type="checkbox" data-col="{{ key }}" {{ "checked" if on }}> {{ label }}</label>
+      {% endif %}{% endfor %}
+    </div>
+  </details>
+</div>
+<div class="table-shell" id="{{ table_id }}">
+  <div class="table-scroll">
+  <table class="results">
+    <thead><tr>
+      <th class="c-act"></th>
+      {% for key, label, kind, on in cols %}
+      <th class="c-{{ key }} sortable {{ 'num' if kind == 'num' }}" data-col="{{ key }}" data-kind="{{ kind }}">{{ label }}{% if key == "cashflow" %}<span class="th-hint" title="{{ financing }}"> ⓘ</span>{% endif %}</th>
+      {% endfor %}
+    </tr></thead>
+    <tbody>
+    {% for l in rows %}{% set d = l.data %}
+    <tr class="{{ 'is-new' if not l.seen else 'is-seen' }} {{ 'is-offline' if not l.active }}" data-id="{{ l.id }}">
+      <td class="c-act">
+        <button type="button" class="ico star {{ 'on' if l.liked }}" data-act="like" title="Merken{% if l.likes %} ({{ l.likes|join(', ') }}){% endif %}">{{ "★" if l.liked else "☆" }}</button>
+        <button type="button" class="ico" data-act="hide" title="{{ 'Einblenden' if l.status == 'ausgeblendet' else 'Ausblenden' }}">{{ "↩" if l.status == "ausgeblendet" else "⊘" }}</button>
+      </td>
+      <td class="c-objekt" data-v="{{ l.title }}">
+        <a href="/listing/{{ l.id }}" class="obj-title" title="{{ l.title }}">{{ l.title or "(ohne Titel)" }}</a>
+        <div class="obj-sub">#{{ l.id }}{% if l.likes %} · ♥ {{ l.likes|join(", ") }}{% endif %}{% if l.comments %} · 💬 {{ l.comments|length }}{% endif %}{% if l.relisted_of %} · ♻️ wieder eingestellt{% endif %}{% if not l.active %} · offline{% endif %}</div>
+      </td>
+      <td class="c-quelle" data-v="{{ l.sources|map(attribute='source')|join(',') }}">
+        {% for s in l.sources %}<a class="src {{ 'off' if not s.active }}" href="{{ s.url }}" target="_blank" rel="noopener" title="{{ s.source }} öffnen">{{ s.source|abbr }}</a>{% endfor %}
+      </td>
+      {% set ppsqm = (l.price / d.area) if l.price and d.area else none %}
+      <td class="c-ppsqm num" data-v="{{ ppsqm or '' }}">{{ ppsqm|num(" €") if ppsqm else "–" }}</td>
+      <td class="c-preis num" data-v="{{ l.price or '' }}">{{ l.price|num(" €") if l.price else "–" }}</td>
+      <td class="c-ort" data-v="{{ l.ort }} {{ l.plz or '' }}" title="{{ l.address }}">{{ l.ort or "–" }}{% if l.plz %} <span class="muted small">{{ l.plz }}</span>{% endif %}</td>
+      <td class="c-wfl num" data-v="{{ d.area or '' }}">{{ d.area|num(" m²") if d.area else "–" }}</td>
+      <td class="c-zi num" data-v="{{ d.rooms or '' }}">{{ ("%g"|format(d.rooms)).replace(".", ",") if d.rooms else "–" }}</td>
+      <td class="c-bj num" data-v="{{ d.year or '' }}">{{ d.year or "–" }}</td>
+      <td class="c-heizung" data-v="{{ l.fernwaerme }}"><span class="badge fw-{{ l.fernwaerme }}">{{ {"ja": "Fernwärme", "nein": d.heating_sources|heating or "andere", "eher_nein": d.heating_sources|heating or "eher nein", "unbekannt": "unbekannt"}.get(l.fernwaerme, "?") }}</span>{% if d.fw_zone and l.fernwaerme != "ja" %} <span class="badge fw-ja" title="liegt im Fernwärme-Gebiet">Gebiet</span>{% endif %}</td>
+      <td class="c-vw num" data-v="{{ l.vw or '' }}">{{ l.vw|num(" €") if l.vw else "–" }}</td>
+      <td class="c-vwp num" data-v="{{ l.vw_pct if l.vw_pct is not none else '' }}">
+        {% if l.vw_pct is not none %}{% set lvl = vw_level(l.vw_pct) %}
+        <span class="{{ 'mkt-good' if l.vw_pct < 0 else 'mkt-bad' if l.vw_pct > 5 }}">{{ "%+d"|format(l.vw_pct) }} %</span>
+        <span class="bars lvl{{ lvl }}" title="Median {{ l.market.label }}: {{ l.market.median|num(' €/m²') }}, n={{ l.market.n }}">{% for i in range(5) %}<i class="{{ 'on' if i < lvl }}"></i>{% endfor %}</span>
+        {% else %}–{% endif %}</td>
+      <td class="c-rendite num" data-v="{{ l.rendite_soll or '' }}">{{ (("%.1f"|format(l.rendite_soll)).replace(".", ",") ~ " %") if l.rendite_soll else "–" }}</td>
+      <td class="c-ist num" data-v="{{ l.rendite_ist or '' }}">{{ (("%.1f"|format(l.rendite_ist)).replace(".", ",") ~ " %") if l.rendite_ist else "–" }}</td>
+      <td class="c-cashflow num" data-v="{{ l.cashflow if l.cashflow is not none else '' }}">{% if l.cashflow is not none %}<span class="{{ 'mkt-good' if l.cashflow >= 0 else 'mkt-bad' }}">{{ ("%+.0f"|format(l.cashflow)) }} €</span>{% else %}–{% endif %}</td>
+      <td class="c-hausgeld num" data-v="{{ d.hausgeld or '' }}">{{ d.hausgeld|num(" €") if d.hausgeld else "–" }}</td>
+      <td class="c-tage num" data-v="{{ l.days_online }}">{{ l.days_online }}</td>
+      <td class="c-preisaend num" data-v="{{ l.price_delta_pct or 0 }}">{% if l.price_delta_pct %}<span class="{{ 'mkt-good' if l.price_delta_pct < 0 else 'mkt-bad' }}">{{ "%+.1f"|format(l.price_delta_pct) }} %</span>{% else %}–{% endif %}</td>
+      <td class="c-erst" data-v="{{ l.first_seen }}">{{ l.first_seen|dt("%d.%m.%Y") }}</td>
+      <td class="c-entf num" data-v="{{ l.distance.km if l.distance else '' }}">{{ (("%.1f"|format(l.distance.km)).replace(".", ",") ~ " km") if l.distance else "–" }}</td>
+      <td class="c-status" data-v="{{ l.status }}">{{ STATUS_LABELS.get(l.status, l.status) }}</td>
+      <td class="c-tags" data-v="{{ l.tags|join(',') }}">{% for t in l.tags %}<span class="tag">{{ t }}</span>{% endfor %}</td>
+    </tr>
+    {% else %}
+    <tr class="empty"><td colspan="22" class="muted">Keine Objekte. {% if caller is defined %}{{ caller() }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="table-foot">
+    <span>Zeige {{ sum.n }}</span>
+    {% if sum.median_days is not none %}<span>⏱ Median online: {{ sum.median_days|int }} Tage</span>{% endif %}
+    {% if sum.median_sqm %}<span>📊 Median Preis/m²: {{ sum.median_sqm|num(" €") }}</span>{% endif %}
+    <a href="/markt">Marktstatistik</a>
+  </div>
+</div>
+<script src="/static/fernimmo-table.js?v=1" defer></script>
+{% endmacro %}

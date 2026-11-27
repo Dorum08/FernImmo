@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Meine Suchen – FernImmo{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h2>Meine Suchen</h2>
+  <button type="button" class="primary" id="new-search">+ Neue Suche</button>
+</div>
+<div class="search-cards">
+  {% for x in searches %}{% set c = x.criteria %}
+  <a class="card search-card {{ 'paused' if not x.active }}" href="/suchen/{{ x.id }}">
+    <div class="sc-top">
+      <span class="sc-name">{{ x.name }}</span>
+      {% if x.n_new %}<span class="badge new-badge">{{ x.n_new }} neu</span>{% endif %}
+    </div>
+    <div class="sc-meta muted small">
+      {{ "🔔" if x.notify else "🔕" }} {{ "aktiv" if x.active else "pausiert" }} ·
+      {{ c.listing_types|map("replace", "kauf", "Kauf")|map("replace", "miete", "Miete")|join(" & ") }}
+      {% if c.rooms_min or c.rooms_max %} · {{ ("%g"|format(c.rooms_min)).replace(".", ",") if c.rooms_min else "…" }}–{{ ("%g"|format(c.rooms_max)).replace(".", ",") if c.rooms_max else "…" }} Zi.{% endif %}
+      {% if c.price_max %} · bis {{ c.price_max|num(" €") }}{% endif %}
+      · {{ "Fernwärme" if c.heating_required else "Heizung egal" }}
+      · {{ (x.plz|join(", ")) if x.plz else ("Flächen" if x.n_areas else "bundesweit") }}
+    </div>
+    <div class="sc-num"><b>{{ x.n_hits }}</b> <span class="muted">Treffer</span></div>
+    <span class="sc-edit" data-href="/suche?id={{ x.id }}">✎ bearbeiten</span>
+  </a>
+  {% endfor %}
+</div>
+<script>
+document.querySelectorAll(".sc-edit").forEach(e => e.addEventListener("click", ev => {
+  ev.preventDefault(); location.href = e.dataset.href;
+}));
+document.getElementById("new-search").onclick = async () => {
+  const name = prompt("Name der neuen Suche:", "Neue Suche");
+  if (!name) return;
+  const r = await fetch("/api/searches", {method: "POST", headers: {"Content-Type": "application/json"},
+                                          body: JSON.stringify({name})});
+  if (r.ok) location.href = "/suche?id=" + (await r.json()).id;
+};
+</script>
+{% endblock %}

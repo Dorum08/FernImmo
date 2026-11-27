@@ -75,6 +75,31 @@ CREATE TABLE IF NOT EXISTS comments (
     text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_comments_listing ON comments(listing_id, ts);
+CREATE TABLE IF NOT EXISTS seen (
+    listing_id INTEGER NOT NULL,
+    user TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    PRIMARY KEY (listing_id, user)
+);
+CREATE TABLE IF NOT EXISTS notes (
+    listing_id INTEGER PRIMARY KEY,
+    text TEXT,
+    link TEXT,
+    offer REAL,              -- eigenes Kaufpreisangebot
+    updated TEXT,
+    updated_by TEXT
+);
+CREATE TABLE IF NOT EXISTS tags (
+    listing_id INTEGER NOT NULL,
+    tag TEXT NOT NULL,
+    PRIMARY KEY (listing_id, tag)
+);
+CREATE TABLE IF NOT EXISTS poi_cache (
+    listing_id INTEGER PRIMARY KEY,
+    lat REAL, lon REAL,
+    ts TEXT,
+    data TEXT
+);
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     started TEXT,
@@ -509,7 +534,24 @@ class DB:
             counts[r["listing_id"]] = counts.get(r["listing_id"], 0) + 1
         stats = self.market_stats()
         ts_now = datetime.now(timezone.utc)
+        seen = {r["listing_id"] for r in self._query(
+            f"SELECT listing_id FROM seen WHERE user=? AND listing_id IN ({ph})", [user or "", *ids])}
+        # Dieselbe Wohnung auf weiteren Portalen (Dubletten) als zusätzliche Quellen
+        dups: dict[int, list[dict]] = {}
+        for d in self._query(f"""SELECT id, source, url, active, duplicate_of FROM listings
+                                 WHERE duplicate_of IN ({ph}) ORDER BY id""", ids):
+            dups.setdefault(d["duplicate_of"], []).append(dict(d))
+        notes = {r["listing_id"]: dict(r) for r in self._query(
+            f"SELECT * FROM notes WHERE listing_id IN ({ph})", ids)}
+        tags: dict[int, list[str]] = {}
+        for t in self._query(f"SELECT listing_id, tag FROM tags WHERE listing_id IN ({ph}) ORDER BY tag", ids):
+            tags.setdefault(t["listing_id"], []).append(t["tag"])
         for r in rows:
+            r["seen"] = r["id"] in seen
+            r["sources"] = [{"id": r["id"], "source": r["source"], "url": r["url"], "active": r["active"]}] + \
+                [{"id": d["id"], "source": d["source"], "url": d["url"], "active": d["active"]} for d in dups.get(r["id"], [])]
+            r["note"] = notes.get(r["id"])
+            r["tags"] = tags.get(r["id"], [])
             chain = self.chain(r["id"]) if r.get("relisted_of") else []
             first = self._query("SELECT first_seen FROM listings WHERE id=?", (chain[0],))[0]["first_seen"] \
                 if chain else r["first_seen"]
@@ -715,6 +757,54 @@ class DB:
                      fw=r["fernwaerme"], likes=len(r.get("likes", [])), url=r["url"],
                      market=(r.get("market") or {}).get("dev"), active=r["active"])
                 for r in rows if r.get("lat") is not None]
+
+    # ------------------------------------------------ gesehen, notizen, tags
+    def mark_seen(self, lid: int, user: str) -> None:
+        self._exec("INSERT OR IGNORE INTO seen(listing_id, user, ts) VALUES (?,?,?)", (lid, user, now()))
+
+    def mark_all_seen(self, ids: list[int], user: str) -> None:
+        ts = now()
+        with self.lock:
+            self.conn.executemany("INSERT OR IGNORE INTO seen(listing_id, user, ts) VALUES (?,?,?)",
+                                  [(i, user, ts) for i in ids])
+            self.conn.commit()
+
+    def unseen_count(self, user: str, search_id: int | None = None) -> int:
+        sql = """SELECT COUNT(*) n FROM listings WHERE active=1 AND duplicate_of IS NULL AND status<>'ausgeblendet'
+                 AND match_level<>'none' AND id NOT IN (SELECT listing_id FROM seen WHERE user=?)"""
+        params: list = [user]
+        if search_id is not None:
+            sql += " AND matched_searches LIKE ?"
+            params.append(f"%,{int(search_id)},%")
+        return self._query(sql, tuple(params))[0]["n"]
+
+    def count_my_objects(self, board: list[str]) -> int:
+        ph = ",".join("?" * len(board))
+        return self._query(f"""SELECT COUNT(*) n FROM listings WHERE status IN ({ph})
+                               OR id IN (SELECT listing_id FROM likes)""", tuple(board))[0]["n"]
+
+    def save_note(self, lid: int, text: str, link: str, offer: float | None, user: str) -> None:
+        self._exec("""INSERT INTO notes(listing_id, text, link, offer, updated, updated_by) VALUES (?,?,?,?,?,?)
+                      ON CONFLICT(listing_id) DO UPDATE SET text=excluded.text, link=excluded.link,
+                      offer=excluded.offer, updated=excluded.updated, updated_by=excluded.updated_by""",
+                   (lid, text[:5000], link[:500], offer, now(), user))
+
+    def add_tag(self, lid: int, tag: str) -> None:
+        self._exec("INSERT OR IGNORE INTO tags(listing_id, tag) VALUES (?,?)", (lid, tag.strip()[:40]))
+
+    def remove_tag(self, lid: int, tag: str) -> None:
+        self._exec("DELETE FROM tags WHERE listing_id=? AND tag=?", (lid, tag))
+
+    def all_tags(self) -> list[str]:
+        return [r["tag"] for r in self._query("SELECT DISTINCT tag FROM tags ORDER BY tag")]
+
+    def poi_get(self, lid: int) -> dict | None:
+        r = self._query("SELECT * FROM poi_cache WHERE listing_id=?", (lid,))
+        return dict(r[0]) if r else None
+
+    def poi_put(self, lid: int, lat: float, lon: float, data: dict) -> None:
+        self._exec("INSERT OR REPLACE INTO poi_cache(listing_id, lat, lon, ts, data) VALUES (?,?,?,?,?)",
+                   (lid, lat, lon, now(), json.dumps(data, ensure_ascii=False)))
 
     # --------------------------------------------------- likes & kommentare
     def toggle_like(self, lid: int, user: str) -> bool:

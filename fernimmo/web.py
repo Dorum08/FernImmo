@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .calc import costs
+from .metrics import enrich, financing_label, vw_level
 from .config import Config
 from .db import DB
 from .geo import PLZ_DIR, Geocoder, circle_polygon, haversine_km, plz_center, plz_state, valid_geometry
@@ -27,7 +28,21 @@ from .pipeline import Scheduler, reprocess
 from .searches import (DEFAULT_CRITERIA, FLAG_CHOICES, clean_criteria, ensure_searches,
                        heating_choice)
 
-STATUSES = ["neu", "favorit", "kontaktiert", "besichtigung", "ausgeblendet"]
+STATUSES = ["neu", "favorit", "kontaktiert", "besichtigung", "angebot", "abgesagt", "ausgeblendet"]
+STATUS_LABELS = {"neu": "Neu", "favorit": "Gemerkt", "kontaktiert": "Kontaktiert", "besichtigung": "Besichtigung",
+                 "angebot": "Angebot abgegeben", "abgesagt": "Abgesagt", "ausgeblendet": "Ausgeblendet"}
+BOARD = ["favorit", "kontaktiert", "besichtigung", "angebot", "abgesagt"]
+SOURCE_ABBR = {"kleinanzeigen": "KA", "immowelt": "IW", "immoscout24": "IS24", "ohne-makler": "OM",
+               "immobilo": "IL", "immobilien.de": "ID", "meinestadt": "MS", "ivd24": "IVD",
+               "regionalimmobilien24": "RI24", "1a-immobilienmarkt": "1A"}
+STRATEGIES = {
+    "micro": {"name": "Micro-Apartments", "icon": "▦", "desc": "Wohnfläche bis 40 m² · 1 Zimmer"},
+    "fernwaerme": {"name": "Fernwärme bestätigt", "icon": "🔥", "desc": "Heizung laut Inserat Fernwärme"},
+    "unter_wert": {"name": "Unter Vergleichswert", "icon": "↘", "desc": "Mind. 15 % unter Vergleichswert · unvermietet"},
+    "ladenhueter": {"name": "Preissenker & Ladenhüter", "icon": "⏱", "desc": "Preis gesenkt · mind. 120 Tage am Markt"},
+    "unter_miete": {"name": "Unter Marktmiete vermietet", "icon": "€", "desc": "Ist-Rendite bis 4 % · Soll-Rendite ab 5 %"},
+    "cashflow": {"name": "Cashflow positiv", "icon": "+", "desc": "Miete deckt Rate und Hausgeld"},
+}
 ANON_USER = "ich"
 HERE = Path(__file__).parent
 
@@ -142,6 +157,14 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
                      state=plz_state(r.get("plz")), rent_sqm=db.rent_estimate(r.get("plz")))
 
     templates.env.globals["calc_for"] = calc_for
+    templates.env.globals.update(SOURCE_ABBR=SOURCE_ABBR, STATUS_LABELS=STATUS_LABELS, vw_level=vw_level,
+                                 BOARD=BOARD)
+    templates.env.filters["abbr"] = lambda src: SOURCE_ABBR.get(src, src[:3].upper())
+
+    def nav_counts(user: str) -> dict:
+        return {"new": db.unseen_count(user), "objects": db.count_my_objects(BOARD)}
+
+    templates.env.globals["nav_counts"] = nav_counts
 
     def auth(creds: HTTPBasicCredentials | None = Depends(security)) -> str:
         """Liefert den angemeldeten Nutzernamen."""
@@ -181,7 +204,7 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         return out
 
     # ------------------------------------------------------------------ Seiten
-    @app.get("/", response_class=HTMLResponse)
+    @app.get("/liste", response_class=HTMLResponse)
     def index(request: Request, f: Filters = Depends(), user: str = Depends(auth)):
         rows = with_distance(db.search(**f.search_args(), user=user), f.sort)
         return templates.TemplateResponse(request, "index.html", {
@@ -196,7 +219,10 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
         row = db.get(lid, user)
         if not row:
             raise HTTPException(404)
+        db.mark_seen(lid, user)
+        work([row])
         return templates.TemplateResponse(request, "detail.html", {
+            "financing": financing_label(cfg.calculator), "all_tags": db.all_tags(),
             "l": row, "changes": db.changes(lid), "statuses": STATUSES, "user": user,
             "here": request.url.path, "calc_defaults": cfg.calculator,
             "duplicate": db.get(row["duplicate_of"]) if row["duplicate_of"] else None,
@@ -240,17 +266,174 @@ def create_app(cfg: Config, db: DB, scheduler: Scheduler | None = None, sync_rep
             "runs": db.recent_runs(100), "busy": bool(scheduler and scheduler.running.locked()), "user": user,
         })
 
+    # ------------------------------------------------- Arbeiten mit Ergebnissen
+    def work(rows: list[dict]) -> list[dict]:
+        return enrich(with_distance(rows, ""), db, cfg.calculator)
+
+    def summary(rows: list[dict]) -> dict:
+        from .db import median
+        days = [r["days_online"] for r in rows if r.get("days_online") is not None]
+        sqm = [r["price"] / r["data"]["area"] for r in rows if r.get("price") and r["data"].get("area")]
+        return {"n": len(rows), "new": sum(1 for r in rows if not r.get("seen")),
+                "median_days": median(days), "median_sqm": median(sqm)}
+
+    def strategy_ok(r: dict, key: str) -> bool:
+        d, flags = r["data"], r["data"].get("flags") or []
+        if key == "micro":
+            return (d.get("area") or 999) <= 40 and (d.get("rooms") or 9) <= 1
+        if key == "fernwaerme":
+            return r.get("fernwaerme") == "ja"
+        if key == "unter_wert":
+            return r.get("vw_pct") is not None and r["vw_pct"] <= -15 and "vermietet" not in flags
+        if key == "ladenhueter":
+            return r.get("price_drops", 0) >= 1 and r.get("days_online", 0) >= 120
+        if key == "unter_miete":
+            return (r.get("rendite_ist") is not None and r["rendite_ist"] <= 4
+                    and (r.get("rendite_soll") or 0) >= 5)
+        if key == "cashflow":
+            return r.get("cashflow") is not None and r["cashflow"] >= 0
+        return True
+
+    def results_ctx(request: Request, user: str, rows: list[dict], **extra) -> dict:
+        return {"user": user, "rows": rows, "sum": summary(rows), "financing": financing_label(cfg.calculator),
+                "here": here_of(request), "query": request.url.query, "statuses": STATUSES, **extra}
+
+    def my_objects(user: str) -> list[dict]:
+        rows = db.search(match=None, status=None, active_only=False, hide_duplicates=False, user=user, limit=3000)
+        return [r for r in rows if r["likes"] or r["status"] in BOARD]
+
+    @app.get("/", response_class=HTMLResponse)
+    def start_page(request: Request, user: str = Depends(auth)):
+        ensure_searches(cfg, db)
+        searches = search_list()
+        for x in searches:
+            x["n_new"] = db.unseen_count(user, x["id"])
+        return templates.TemplateResponse(request, "start.html", {
+            "user": user, "searches": searches, "strategies": STRATEGIES, "stats": db.stats(),
+        })
+
+    @app.get("/suchen", response_class=HTMLResponse)
+    def searches_page(request: Request, user: str = Depends(auth)):
+        ensure_searches(cfg, db)
+        searches = search_list()
+        for x in searches:
+            x["n_new"] = db.unseen_count(user, x["id"])
+            x["n_hits"] = len(db.search(search_id=x["id"], match="treffer", user=None, limit=5000))
+        return templates.TemplateResponse(request, "searches.html", {"user": user, "searches": searches})
+
+    @app.get("/suchen/{sid}", response_class=HTMLResponse)
+    def search_results(request: Request, sid: int, level: str = "treffer", offline: int = 0, hidden: int = 0,
+                       user: str = Depends(auth)):
+        srch = db.get_search(sid)
+        if not srch:
+            raise HTTPException(404)
+        level = level if level in ("treffer", "voll", "teilweise") else "treffer"
+        rows = db.search(search_id=sid, match=level, active_only=not offline, user=user, limit=3000,
+                         status="ausgeblendet" if hidden else None)
+        return templates.TemplateResponse(request, "results.html", results_ctx(
+            request, user, work(rows), srch=srch, title=srch["name"], level=level, offline=offline, hidden=hidden,
+            export_q=f"search={sid}&match={level}" + ("&inactive=1" if offline else "")))
+
+    @app.get("/objekte", response_class=HTMLResponse)
+    def adhoc_results(request: Request, ort: str = "", typ: str = "kauf", ppsqm_max: str = "", rendite_min: str = "",
+                      markt: str = "", strategie: str = "", user: str = Depends(auth)):
+        typ = typ if typ in ("kauf", "miete") else "kauf"
+        rows = work(db.search(match=None, listing_type=typ, user=user, limit=5000))
+        o = ort.strip().lower()
+        if o:
+            if o.isdigit():
+                rows = [r for r in rows if (r.get("plz") or "").startswith(o)]
+            else:
+                rows = [r for r in rows if o in (r.get("address") or "").lower() or o in (r.get("title") or "").lower()]
+        if _num(ppsqm_max):
+            rows = [r for r in rows if r["price"] and r["data"].get("area")
+                    and r["price"] / r["data"]["area"] <= _num(ppsqm_max)]
+        if _num(rendite_min):
+            rows = [r for r in rows if (r.get("rendite_soll") or 0) >= _num(rendite_min)]
+        if markt in ("unter", "deutlich_unter", "ueber"):
+            lim = {"unter": (None, 0), "deutlich_unter": (None, -10), "ueber": (0, None)}[markt]
+            rows = [r for r in rows if r.get("vw_pct") is not None
+                    and (lim[0] is None or r["vw_pct"] > lim[0]) and (lim[1] is None or r["vw_pct"] < lim[1])]
+        if strategie in STRATEGIES:
+            rows = [r for r in rows if strategy_ok(r, strategie)]
+        chips = [c for c in (ort and f"Ort: {ort}", f"{'Kauf' if typ == 'kauf' else 'Miete'}",
+                             _num(ppsqm_max) and f"bis {fmt_num(_num(ppsqm_max))} €/m²",
+                             _num(rendite_min) and f"Soll-Rendite ab {rendite_min} %",
+                             markt and {"unter": "unter Vergleichswert", "deutlich_unter": "≥ 10 % unter Vergleichswert",
+                                        "ueber": "über Vergleichswert"}.get(markt),
+                             strategie in STRATEGIES and STRATEGIES[strategie]["name"]) if c]
+        return templates.TemplateResponse(request, "results.html", results_ctx(
+            request, user, rows, srch=None, title=STRATEGIES[strategie]["name"] if strategie in STRATEGIES
+            else "Suchergebnis", chips=chips, export_q=f"match=&listing_type={typ}"))
+
+    @app.get("/merkliste", response_class=HTMLResponse)
+    def my_objects_page(request: Request, view: str = "tabelle", q: str = "", status: str = "", tag: str = "",
+                        user: str = Depends(auth)):
+        rows = work(my_objects(user))
+        ql = q.strip().lower()
+        if ql:
+            rows = [r for r in rows if ql in " ".join(str(x) for x in (
+                r.get("title"), r.get("address"), (r.get("note") or {}).get("text"), " ".join(r.get("tags", [])),
+                r.get("plz"))).lower()]
+        if status in STATUSES:
+            rows = [r for r in rows if (r["status"] if r["status"] in BOARD else "favorit") == status]
+        if tag:
+            rows = [r for r in rows if tag in r.get("tags", [])]
+        return templates.TemplateResponse(request, "merkliste.html", results_ctx(
+            request, user, rows, view="board" if view == "board" else "tabelle", q=q, status=status, tag=tag,
+            all_tags=db.all_tags(), title="Meine Objekte", export_q="match=&liked=1"))
+
+    @app.get("/api/listing/{lid}/umgebung")
+    def api_umgebung(lid: int, user: str = Depends(auth)):
+        from .poi import nearby
+        row = db.get(lid)
+        if not row:
+            raise HTTPException(404)
+        if row.get("lat") is None or row.get("geo_precision") not in ("portal", "adresse"):
+            return JSONResponse({"error": "Genaue Lage unbekannt – nur PLZ bekannt."})
+        data = nearby(db, lid, row["lat"], row["lon"], cfg.umgebung)
+        return JSONResponse(data or {"error": "Umgebungsdaten gerade nicht abrufbar."})
+
+    @app.post("/api/seen")
+    def api_seen(payload: dict = Body(...), user: str = Depends(auth)):
+        ids = [int(i) for i in payload.get("ids", []) if str(i).isdigit()][:5000]
+        db.mark_all_seen(ids, user)
+        return {"ok": True, "n": len(ids)}
+
+    @app.post("/listing/{lid}/note")
+    def save_note(lid: int, text: str = Form(""), link: str = Form(""), offer: str = Form(""),
+                  back: str = Form("/"), user: str = Depends(auth)):
+        _require(lid)
+        link = link.strip()
+        if link and not link.lower().startswith(("http://", "https://")):
+            link = "https://" + link
+        db.save_note(lid, text.strip(), link, _num(offer), user)
+        return RedirectResponse(f"{_safe_back(back)}#notizen", status_code=303)
+
+    @app.post("/listing/{lid}/tag")
+    def tag(request: Request, lid: int, tag: str = Form(...), remove: int = Form(0), back: str = Form("/"),
+            user: str = Depends(auth)):
+        _require(lid)
+        if tag.strip():
+            (db.remove_tag if remove else db.add_tag)(lid, tag.strip())
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"tags": db.get(lid)["tags"]})
+        return RedirectResponse(_safe_back(back), status_code=303)
+
     # ------------------------------------------------------- Aktionen (Formulare)
     def _require(lid: int) -> None:
         if not db.get(lid):
             raise HTTPException(404)
 
     @app.post("/listing/{lid}/status")
-    def set_status(lid: int, status: str = Form(...), back: str = Form("/"), user: str = Depends(auth)):
+    def set_status(request: Request, lid: int, status: str = Form(...), back: str = Form("/"),
+                   user: str = Depends(auth)):
         if status not in STATUSES:
             raise HTTPException(400)
         _require(lid)
         db.set_status(lid, status)
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"status": status})
         return RedirectResponse(_safe_back(back), status_code=303)
 
     @app.post("/listing/{lid}/like")

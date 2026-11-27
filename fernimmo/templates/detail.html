@@ -6,68 +6,132 @@
 <script src="/static/leaflet/leaflet.js"></script>
 <script src="/static/fernimmo-map.js"></script>
 {% endblock %}
-{% block content %}{% set d = l.data %}
-<p><a href="/">← zurück</a></p>
-<div class="card" id="l{{ l.id }}">
-  <h2 style="margin-top:0"><span class="lid">#{{ l.id }}</span> {{ l.title }}</h2>
-  <p>
-    <span class="badge b-{{ l.match_level }}">{{ l.match_level }}</span>
-    <span class="badge fw-{{ l.fernwaerme }}">Fernwärme: {{ (l.fernwaerme or "?").replace("_"," ") }}</span>
-    {% if not l.active %}<span class="badge fw-nein">offline</span>{% endif %}
-    {% for p in l.matched_profiles %}<span class="badge search-badge">🔎 {{ p }}</span> {% endfor %}
-    <a href="{{ l.url }}" target="_blank" rel="noopener">Zum Inserat auf {{ l.source }} ↗</a>
-  </p>
-  {% if l.match_reasons %}<p class="muted">Bewertung: {{ l.match_reasons|join("; ") }}</p>{% endif %}
-  {% if duplicate %}<p class="muted">Vermutlich identisch mit <a href="/listing/{{ duplicate.id }}">#{{ duplicate.id }} ({{ duplicate.source }})</a></p>{% endif %}
-  <form method="post" action="/listing/{{ l.id }}/status" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-    <input type="hidden" name="back" value="/listing/{{ l.id }}">
-    Status: <select name="status">{% for s in statuses %}<option {% if l.status==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select>
-    <button>Speichern</button>
-  </form>
-  {{ social(l, user, here, open=True) }}
-</div>
-
-<div class="card" style="margin-top:12px">
-  <h3 style="margin-top:0">Marktlage</h3>
-  <div class="calc-out" style="margin-top:0">
-    <div><span class="muted small">Preis pro m²</span><b>{{ d.price_per_sqm|num(" €") }}</b></div>
-    <div><span class="muted small">Vergleich zum Markt</span>
-      {% if l.market %}<b class="{{ 'mkt-good' if l.market.dev < 0 else 'mkt-bad' if l.market.dev > 5 else '' }}">{{ "%+d"|format(l.market.dev) }} %</b>
-      <span class="small muted">Median {{ l.market.label }}: {{ l.market.median|num(" €/m²") }}, {{ l.market.n }} Inserate</span>
-      {% else %}<b>–</b><span class="small muted">noch zu wenige Vergleichsinserate</span>{% endif %}</div>
-    <div><span class="muted small">Am Markt</span><b>{{ l.days_online }} Tage</b>
-      <span class="small muted">{% if l.predecessors %}inkl. {{ l.predecessors|length }} früherem Inserat{{ "en" if l.predecessors|length > 1 }}{% else %}seit {{ l.first_seen|dt("%d.%m.%Y") }}{% endif %}</span></div>
-    <div><span class="muted small">Preisentwicklung</span>
-      <b class="{{ 'mkt-good' if (l.price_delta_pct or 0) < 0 else 'mkt-bad' if (l.price_delta_pct or 0) > 0 }}">{{ "%+.1f %%"|format(l.price_delta_pct) if l.price_delta_pct else "unverändert" }}</b>
-      <span class="small muted">{{ l.price_drops }}× gesenkt, {{ l.price_raises }}× erhöht{% if l.first_price %} · Start {{ l.first_price|num(" €") }}{% endif %}</span></div>
+{% block content %}{% set d = l.data %}{% set flags = d.flags or [] %}{% set feats = d.features or [] %}
+<p class="back"><a href="javascript:history.back()">← zurück</a></p>
+<div class="detail-head">
+  <h1>{{ l.title or "(ohne Titel)" }}</h1>
+  <div class="head-badges">
+    <span class="badge {{ 'fw-ja' if l.active else 'fw-nein' }}">{{ "✓ Aktiv" if l.active else "Offline" }}</span>
+    <span class="badge b-{{ l.match_level }}">{{ {"voll": "Volltreffer", "teilweise": "Möglicher Treffer", "none": "Kein Treffer"}[l.match_level] }}</span>
+    <span class="badge fw-{{ l.fernwaerme }}">Fernwärme: {{ (l.fernwaerme or "?").replace("_", " ") }}</span>
+    {% for p in l.matched_profiles %}<a class="badge search-badge" href="/suchen">🔎 {{ p }}</a>{% endfor %}
+    <span class="muted small">#{{ l.id }}</span>
   </div>
-  {% if l.predecessors %}<p class="small">♻️ Diese Wohnung war schon früher inseriert:
-    {% for p in l.predecessors %}<a href="/listing/{{ p }}">#{{ p }}</a>{{ ", " if not loop.last }}{% endfor %}.
-    Der Verlauf unten enthält auch deren Änderungen.</p>{% endif %}
-  {% if l.lat is not none %}
-  <div id="minimap" class="map-small" style="margin-top:10px"></div>
-  <p class="small muted">Lage {{ {"portal": "laut Portal", "adresse": "aus der Adresse ermittelt", "plz": "nur PLZ-genau (Mittelpunkt)"}[l.geo_precision] }}{% if d.fw_zone %} · liegt in einem eingezeichneten Fernwärme-Gebiet{% endif %}</p>
-  <script>
-  (async () => {
-    const map = FI.map("minimap", [{{ l.lat }}, {{ l.lon }}], {{ 15 if l.geo_precision != "plz" else 13 }});
-    (await FI.json("/api/areas")).areas.forEach(a => FI.areaLayer(a, {interactive: false}).addTo(map));
-    {% if l.geo_precision == "plz" %}
-    const plz = await FI.plzGroup({{ (d.plz or "")[:2]|tojson }});
-    L.geoJSON(plz, {filter: f => f.properties.plz === {{ d.plz|tojson }}, style: {color: "#d97706", weight: 2, fillOpacity: 0.1}}).addTo(map);
-    {% else %}
-    L.circleMarker([{{ l.lat }}, {{ l.lon }}], {radius: 9, color: "#fff", weight: 2, fillColor: FI.colors[{{ l.match_level|tojson }}], fillOpacity: 1}).addTo(map);
-    {% endif %}
-  })();
-  </script>
-  {% endif %}
+  <div class="head-actions">
+    <form method="post" action="/listing/{{ l.id }}/like"><input type="hidden" name="back" value="{{ here }}">
+      <button class="btn-like {{ 'on-star' if l.liked }}">{{ "★ Gemerkt" if l.liked else "☆ Merken" }}</button></form>
+    <form method="post" action="/listing/{{ l.id }}/status"><input type="hidden" name="back" value="{{ here }}">
+      <input type="hidden" name="status" value="{{ 'neu' if l.status == 'ausgeblendet' else 'ausgeblendet' }}">
+      <button class="btn-like">{{ "↩ Einblenden" if l.status == "ausgeblendet" else "⊘ Ausblenden" }}</button></form>
+    <form method="post" action="/listing/{{ l.id }}/status"><input type="hidden" name="back" value="{{ here }}">
+      <select name="status" onchange="this.form.submit()" aria-label="Status">
+        {% for s in statuses %}<option value="{{ s }}" {{ "selected" if l.status == s }}>{{ STATUS_LABELS[s] }}</option>{% endfor %}
+      </select></form>
+    <a class="btn-like primary" href="{{ l.url }}" target="_blank" rel="noopener">Zum Inserat ↗</a>
+  </div>
+  <div class="tag-row">
+    {% for t in l.tags %}<form method="post" action="/listing/{{ l.id }}/tag" class="inline-form"><input type="hidden" name="back" value="{{ here }}">
+      <input type="hidden" name="tag" value="{{ t }}"><input type="hidden" name="remove" value="1"><button class="tag tag-btn" title="Tag entfernen">{{ t }} ✕</button></form>{% else %}<span class="muted small">Noch keine Tags.</span>{% endfor %}
+    <form method="post" action="/listing/{{ l.id }}/tag" class="inline-form"><input type="hidden" name="back" value="{{ here }}">
+      <input name="tag" list="all-tags" placeholder="+ Tag hinzufügen" class="tag-input" maxlength="40" required></form>
+    <datalist id="all-tags">{% for t in all_tags %}<option value="{{ t }}">{% endfor %}</datalist>
+  </div>
 </div>
 
-{% if l.listing_type == "kauf" and l.price %}
-<div class="card" style="margin-top:12px" id="rechner">
-  <h3 style="margin-top:0">Kostenrechner</h3>
-  <p class="small muted">Eigene Werte werden in diesem Browser gespeichert und für alle Wohnungen übernommen.
-    Kaufpreis, Hausgeld und Fläche kommen aus dem Inserat und lassen sich hier zum Durchspielen ändern.</p>
-  <form class="calc" id="calc" onsubmit="return false">
+<div class="detail-grid">
+  <div class="col">
+    <section class="card">
+      <h3>🏠 Eigenschaften</h3>
+      <table class="kv">
+        <tr><th>Typ</th><td>{{ "Eigentumswohnung" if l.listing_type == "kauf" else "Mietwohnung" if l.listing_type == "miete" else "?" }}</td></tr>
+        {% if l.listing_type == "kauf" %}
+        <tr><th>Kaufpreis</th><td><b>{{ l.price|num(" €") }}</b></td></tr>
+        <tr><th>Kaufpreis / m²</th><td>{{ d.price_per_sqm|num(" €") }}</td></tr>
+        {% if l.rendite_ist %}<tr><th>Aktuelle Kaltmiete</th><td>{{ l.miete|num(" €") }}{% if d.area %} ({{ ("%.2f"|format(l.miete / d.area)).replace(".", ",") }} €/m²){% endif %}</td></tr>{% endif %}
+        {% else %}
+        <tr><th>Kaltmiete</th><td><b>{{ d.rent_cold|num(" €") }}</b></td></tr>
+        <tr><th>Warmmiete</th><td>{{ d.rent_warm|num(" €") }}</td></tr>
+        {% endif %}
+        <tr><th>Wohnfläche</th><td>{{ d.area|num(" m²", 1) }}</td></tr>
+        <tr><th>Zimmer</th><td>{{ ("%g"|format(d.rooms)).replace(".", ",") if d.rooms else "?" }}</td></tr>
+        <tr><th>Etage</th><td>{{ d.floor if d.floor is not none else "?" }}{% if d.top_floor %} (Dachgeschoss){% endif %}</td></tr>
+        <tr><th>Baujahr</th><td>{{ d.year or "?" }}</td></tr>
+        <tr><th>Hausgeld</th><td>{{ d.hausgeld|num(" €") if d.hausgeld else "?" }}</td></tr>
+        <tr><th>Balkon/Terrasse</th><td>{{ "Ja" if "balkon" in feats else "–" }}</td></tr>
+        <tr><th>Einbauküche</th><td>{{ "Ja" if "einbaukueche" in feats else "–" }}</td></tr>
+        <tr><th>Aufzug</th><td>{{ "Ja" if "aufzug" in feats else "–" }}</td></tr>
+        <tr><th>Keller</th><td>{{ "Ja" if "keller" in feats else "–" }}</td></tr>
+        <tr><th>Stellplatz</th><td>{{ "Ja" if "stellplatz" in feats else "–" }}</td></tr>
+        <tr><th>Bezugsfrei ab</th><td>{{ d.available_from or "?" }}</td></tr>
+        <tr><th>Maklerprovision</th><td>{{ "provisionsfrei" if "provisionsfrei" in flags else "nicht angegeben / üblich" }}</td></tr>
+        <tr><th>Vermietet</th><td>{{ "Ja" if "vermietet" in flags else "Nein / unbekannt" }}</td></tr>
+        <tr><th>Zwangsversteigerung</th><td>{{ "Ja" if "versteigerung" in flags else "Nein" }}</td></tr>
+        <tr><th>Erbpacht</th><td>{{ "Ja" if "erbpacht" in flags else "Nein / unbekannt" }}</td></tr>
+        {% if "denkmal" in flags %}<tr><th>Denkmalschutz</th><td>Ja</td></tr>{% endif %}
+      </table>
+    </section>
+
+    <details class="card fold" open>
+      <summary><h3>⚡ Heizung &amp; Energie</h3><span class="badge fw-{{ l.fernwaerme }}">FW: {{ (l.fernwaerme or "?").replace("_", " ") }}</span></summary>
+      <table class="kv">
+        <tr><th>Energieträger</th><td>{{ d.heating_sources|heating or "?" }}{% if d.heating_from %} <span class="muted small">({{ "aus Angaben" if d.heating_from == "struktur" else "aus Beschreibung" }})</span>{% endif %}</td></tr>
+        <tr><th>Heizungsart</th><td>{{ d.heating_systems|join(", ") or "?" }}</td></tr>
+        <tr><th>Fernwärme-Gebiet</th><td>{{ "liegt in einem eingezeichneten Gebiet" if d.fw_zone else "–" }}</td></tr>
+        <tr><th>Energieklasse</th><td>{{ d.energy_class or "?" }}</td></tr>
+        <tr><th>Energiekennwert</th><td>{{ d.energy_value|num(" kWh/(m²·a)", 1) if d.energy_value else "?" }}</td></tr>
+      </table>
+    </details>
+
+    {% if l.structured %}
+    <details class="card fold">
+      <summary><h3>📋 Angaben im Inserat</h3></summary>
+      <table class="kv">{% for k, v in l.structured.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</table>
+    </details>
+    {% endif %}
+    <details class="card fold">
+      <summary><h3>📝 Beschreibung</h3></summary>
+      <pre>{{ l.raw_text }}</pre>
+    </details>
+  </div>
+
+  <div class="col">
+    <section class="card">
+      <h3>ⓘ Infos</h3>
+      <div class="tiles">
+        <div><span class="muted small">Erstmals online</span><b>{{ l.first_seen|dt("%d.%m.%Y") }}</b></div>
+        <div><span class="muted small">Tage online</span><b>{{ l.days_online }}</b>{% if l.predecessors %}<span class="small muted">inkl. früherer Inserate</span>{% endif %}</div>
+      </div>
+      <table class="kv">
+        <tr><th>Adresse</th><td>{{ l.address or l.plz or "?" }}{% if l.geo_precision %} <span class="muted small">({{ {"portal": "Lage laut Portal", "adresse": "aus Adresse", "plz": "nur PLZ-genau"}[l.geo_precision] }})</span>{% endif %}</td></tr>
+        {% for s in l.sources %}
+        <tr><th><a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.source }} ↗</a></th>
+          <td><span class="badge {{ 'fw-ja' if s.active else 'fw-nein' }}">{{ "✓ Online" if s.active else "Offline" }}</span>{% if s.id != l.id %} <a class="small" href="/listing/{{ s.id }}">#{{ s.id }}</a>{% endif %}</td></tr>
+        {% endfor %}
+        {% if l.predecessors %}<tr><th>Früher inseriert</th><td>{% for p in l.predecessors %}<a href="/listing/{{ p }}">#{{ p }}</a> {% endfor %}</td></tr>{% endif %}
+        {% if duplicate %}<tr><th>Gleiche Wohnung</th><td><a href="/listing/{{ duplicate.id }}">#{{ duplicate.id }} ({{ duplicate.source }})</a></td></tr>{% endif %}
+      </table>
+    </section>
+
+    <section class="card">
+      <h3>◎ Bewertung</h3>
+      <div class="rating">
+        {% if l.rendite_soll %}<div><span class="r-ico">%</span><div><b>{{ ("%.1f"|format(l.rendite_soll)).replace(".", ",") }} % Rendite (soll)</b>
+          <span class="muted small">bei geschätzt {{ l.miete_soll|num(" €") }} Kaltmiete/Monat ({{ l.miete_quelle }})</span></div></div>{% endif %}
+        {% if l.rendite_ist %}<div><span class="r-ico">€</span><div><b>{{ ("%.1f"|format(l.rendite_ist)).replace(".", ",") }} % Rendite (ist)</b>
+          <span class="muted small">bei {{ l.miete|num(" €") }} aktueller Kaltmiete laut Inserat</span></div></div>{% endif %}
+        {% if l.vw %}<div><span class="r-ico">≈</span><div><b class="{{ 'mkt-good' if l.vw_pct < 0 else 'mkt-bad' if l.vw_pct > 5 }}">{{ l.vw_pct|abs }} % {{ "unter" if l.vw_pct < 0 else "über" }} Vergleichswert</b>
+          <span class="muted small">Vergleichswert {{ l.vw|num(" €") }} ({{ l.market.median|num(" €/m²") }}, Median {{ l.market.label }}, {{ l.market.n }} Inserate)</span></div></div>
+        {% else %}<p class="muted small">Für einen Vergleichswert gibt es noch zu wenige Inserate in der Gegend.</p>{% endif %}
+      </div>
+      <p class="muted small">Schätzung aus den von FernImmo gesammelten Inseraten – kein Gutachten.</p>
+    </section>
+
+    {% if l.listing_type == "kauf" and l.price %}
+    <details class="card fold" id="rechner">
+      <summary><h3>🧮 Cashflow-Rechner</h3>{% if l.cashflow is not none %}<span class="{{ 'mkt-good' if l.cashflow >= 0 else 'mkt-bad' }}">Cashflow {{ "%+.0f"|format(l.cashflow) }} €</span>{% endif %}</summary>
+      <p class="small muted">Cashflow in Listen: {{ financing }}. Unten eigene Werte durchspielen; sie werden in diesem Browser gespeichert.</p>
+      {% set c0 = calc_for(l) %}
+      <form class="calc" id="calc" onsubmit="return false">
     <label>Kaufpreis €<input type="number" step="1000" name="price" value="{{ l.price|int }}" data-fixed></label>
     <label>Wohnfläche m²<input type="number" step="0.1" name="area" value="{{ d.area or '' }}" data-fixed></label>
     <label>Hausgeld €/Monat<input type="number" step="10" name="hausgeld" value="{{ (d.hausgeld or 0)|int }}" data-fixed></label>
@@ -120,64 +184,98 @@
     calc();
   })();
   </script>
-</div>
-{% endif %}
-
-<div class="card" style="margin-top:12px" id="verlauf">
-  <h3 style="margin-top:0">Änderungsverlauf</h3>
-  <p class="muted small">Erfasst bei jedem erneuten Abruf des Inserats (Treffer und gelikte Inserate werden regelmäßig neu geladen).
-    Zuletzt abgerufen: {{ l.last_fetched|dt or "–" }}.</p>
-  <div class="table-wrap">
-  <table class="changes">
-    <tr><th>Datum / Uhrzeit</th>{% if l.predecessors %}<th>Inserat</th>{% endif %}<th>Merkmal</th><th>Vorher</th><th>Nachher</th></tr>
-    {% for c in changes %}
-    <tr class="ch-{{ c.direction or c.field }}">
-      <td style="white-space:nowrap">{{ c.ts|dt }}</td>
-      {% if l.predecessors %}<td>{% if c.listing_id != l.id %}<a href="/listing/{{ c.listing_id }}">#{{ c.listing_id }}</a>{% else %}#{{ l.id }}{% endif %}</td>{% endif %}
-      <td>{% if c.direction == "down" %}📉 {% elif c.direction == "up" %}📈 {% endif %}{{ c.label }}</td>
-      {% if c.field == "raw_text" %}
-      <td colspan="2"><details><summary>Beschreibung geändert – anzeigen</summary>
-        <div class="desc-diff"><div><b class="small muted">vorher</b><pre>{{ c.old or "–" }}</pre></div>
-        <div><b class="small muted">nachher</b><pre>{{ c.new }}</pre></div></div></details></td>
-      {% else %}
-      <td class="muted">{{ c.old or "–" }}</td><td><b>{{ c.new or "–" }}</b></td>
-      {% endif %}
-    </tr>
-    {% else %}<tr><td colspan="4" class="muted">Noch keine Einträge.</td></tr>{% endfor %}
-  </table>
-  </div>
-</div>
-
-<div class="card" style="margin-top:12px">
-  <h3 style="margin-top:0">Erkannte Merkmale</h3>
-  <div class="table-wrap">
-  <table>
-    <tr><th>Vermarktung</th><td>{{ l.listing_type or "?" }}</td><th>Adresse</th><td>{{ l.address or d.plz or "?" }}</td></tr>
-    <tr><th>Zimmer</th><td>{{ d.rooms|num("", 1) }}</td><th>Wohnfläche</th><td>{{ d.area|num(" m²", 1) }}</td></tr>
-    <tr><th>Kaufpreis</th><td>{{ d.purchase_price|num(" €") }}</td><th>€/m²</th><td>{{ d.price_per_sqm|num(" €") }}</td></tr>
-    <tr><th>Hausgeld</th><td>{{ d.hausgeld|num(" €") }}</td><th>Baujahr</th><td>{{ d.year or "?" }}</td></tr>
-    {% if d.rent_cold or d.rent_warm %}
-    <tr><th>Kaltmiete</th><td>{{ d.rent_cold|num(" €") }}</td><th>Warmmiete</th><td>{{ d.rent_warm|num(" €") }}</td></tr>
+    </details>
     {% endif %}
-    <tr><th>Energieträger</th><td>{{ d.heating_sources|heating or "?" }}
-        {% if d.heating_from %}<span class="muted">({{ d.heating_from }})</span>{% endif %}</td>
-        <th>Heizungsart</th><td>{{ d.heating_systems|join(", ") or "?" }}</td></tr>
-    <tr><th>Energieklasse</th><td>{{ d.energy_class or "?" }}</td><th>Energiekennwert</th><td>{{ d.energy_value|num(" kWh/(m²·a)", 1) }}</td></tr>
-    <tr><th>Etage</th><td>{{ d.floor if d.floor is not none else "?" }}{% if d.top_floor %} (DG){% endif %}</td><th>Verfügbar ab</th><td>{{ d.available_from or "?" }}</td></tr>
-    <tr><th>Ausstattung</th><td>{{ d.features|join(", ") or "–" }}</td><th>Hinweise</th><td>{{ d.flags|join(", ") or "–" }}</td></tr>
-    <tr><th>Erstmals gesehen</th><td>{{ l.first_seen|dt }}</td><th>Zuletzt in Suche</th><td>{{ l.last_seen|dt }}</td></tr>
-  </table>
+
+    {% if l.afa %}
+    <details class="card fold">
+      <summary><h3>⏳ Restnutzungsdauer</h3><span>Abschreibung ~{{ ("%.1f"|format(l.afa.afa_pct)).replace(".", ",") }} %</span></summary>
+      <table class="kv">
+        <tr><th>Gebäudealter</th><td>{{ l.afa.alter }} Jahre (Baujahr {{ d.year }})</td></tr>
+        <tr><th>Restnutzungsdauer</th><td>~{{ l.afa.restnutzungsdauer }} Jahre <span class="muted small">(bei 80 Jahren Gesamtnutzungsdauer, ohne Modernisierung)</span></td></tr>
+        <tr><th>Lineare AfA</th><td>{{ ("%.1f"|format(l.afa.linear_pct)).replace(".", ",") }} % pro Jahr</td></tr>
+        {% if l.afa.gutachten_pct %}<tr><th>Mit Restnutzungsdauer-Gutachten</th><td>bis ~{{ ("%.1f"|format(l.afa.gutachten_pct)).replace(".", ",") }} % pro Jahr</td></tr>{% endif %}
+      </table>
+      <p class="muted small">Grobe Orientierung, keine Steuerberatung. AfA nur auf den Gebäudeanteil.</p>
+    </details>
+    {% endif %}
+
+    <section class="card" id="notizen">
+      <h3>🗒 Notizen</h3>
+      <form method="post" action="/listing/{{ l.id }}/note" class="note-form">
+        <input type="hidden" name="back" value="{{ here }}">
+        <textarea name="text" rows="4" placeholder="Notiz zu diesem Objekt">{{ l.note.text if l.note else "" }}</textarea>
+        <label>Link (optional)<input name="link" value="{{ l.note.link if l.note and l.note.link else '' }}" placeholder="https://…"></label>
+        <label>Kaufpreisangebot (optional)<input name="offer" type="number" step="1000" value="{{ l.note.offer|int if l.note and l.note.offer else '' }}" placeholder="z. B. 125000"></label>
+        <div class="note-foot"><span class="muted small">{% if l.note and l.note.updated %}zuletzt {{ l.note.updated|dt }} von {{ l.note.updated_by }}{% endif %}</span>
+          <button class="primary">✓ Speichern</button></div>
+      </form>
+      <h3 style="margin-top:16px">💬 Kommentare &amp; Likes</h3>
+      {{ social(l, user, here, open=True) }}
+    </section>
   </div>
 </div>
 
-{% if l.structured %}
-<div class="card" style="margin-top:12px">
-  <h3 style="margin-top:0">Angaben im Inserat</h3>
-  <table>{% for k, v in l.structured.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</table>
-</div>
+<section class="card" id="lage" style="margin-top:14px">
+  <h3>📍 Lage</h3>
+  {% if l.lat is not none %}
+  <div id="minimap" class="map-detail"></div>
+  <p class="small muted">{{ {"portal": "Markierung laut Portal", "adresse": "Markierung aus der Adresse ermittelt", "plz": "Nur PLZ bekannt – Gebiet der PLZ"}[l.geo_precision] }}{% if d.fw_zone %} · liegt in einem eingezeichneten Fernwärme-Gebiet{% endif %}</p>
+  <h4>In der Nähe <span class="muted small">Luftlinie · Orte © OpenStreetMap-Mitwirkende</span></h4>
+  <div id="umgebung" class="poi-grid"><p class="muted small">lädt …</p></div>
+  {% else %}<p class="muted">Lage unbekannt.</p>{% endif %}
+</section>
+
+<section class="card" id="verlauf" style="margin-top:14px">
+  <h3>🕘 Historie <span class="badge">{{ changes|length }}</span></h3>
+  <ol class="timeline">
+    {% for c in changes|reverse %}
+    <li class="tl-{{ c.direction or c.field }}">
+      <span class="tl-dot">{{ "+" if c.field == "created" else "↓" if c.direction == "down" else "↑" if c.direction == "up" else "✎" }}</span>
+      <div><span class="muted small">{{ c.ts|dt }}{% if l.predecessors and c.listing_id != l.id %} · <a href="/listing/{{ c.listing_id }}">#{{ c.listing_id }}</a>{% endif %}</span>
+        {% if c.field == "created" %}<div>Objekt {{ c.new }}.</div>
+        {% elif c.field == "raw_text" %}<div><b>Beschreibung</b> geändert <details class="small"><summary>anzeigen</summary><div class="desc-diff"><div><b class="small muted">vorher</b><pre>{{ c.old or "–" }}</pre></div><div><b class="small muted">nachher</b><pre>{{ c.new }}</pre></div></div></details></div>
+        {% else %}<div class="tl-change"><span class="muted">{{ c.label }}</span> <span class="muted">{{ c.old or "keine Angabe" }}</span> › <b>{{ c.new or "keine Angabe" }}</b></div>{% endif %}
+      </div>
+    </li>
+    {% else %}<li class="muted">Noch keine Einträge.</li>{% endfor %}
+  </ol>
+</section>
+
+{% if l.lat is not none %}
+<script>
+(async () => {
+  const map = FI.map("minimap", [{{ l.lat }}, {{ l.lon }}], {{ 15 if l.geo_precision != "plz" else 13 }});
+  (await FI.json("/api/areas")).areas.forEach(a => FI.areaLayer(a, {interactive: false}).addTo(map));
+  {% if l.geo_precision == "plz" %}
+  const plz = await FI.plzGroup({{ (d.plz or "")[:2]|tojson }});
+  L.geoJSON(plz, {filter: f => f.properties.plz === {{ d.plz|tojson }}, style: {color: "#f5a524", weight: 2, fillOpacity: 0.1}}).addTo(map);
+  {% else %}
+  L.marker([{{ l.lat }}, {{ l.lon }}], {icon: L.divIcon({className: "home-pin", html: "⌂", iconSize: [34, 34]})}).addTo(map);
+  {% endif %}
+  const box = document.getElementById("umgebung");
+  const COLORS = {einkaufen: "#f5a524", oepnv: "#22b8cf", bildung: "#7c83fd", gesundheit: "#f06272"};
+  try {
+    const r = await FI.json("/api/listing/{{ l.id }}/umgebung");
+    if (r.error) { box.innerHTML = '<p class="muted small">' + FI.esc(r.error) + '</p>'; return; }
+    box.innerHTML = "";
+    for (const [key, cat] of Object.entries(r.categories)) {
+      const col = document.createElement("div");
+      let html = '<div class="poi-head"><i class="dot" style="background:' + COLORS[key] + '"></i> ' + FI.esc(cat.label) +
+                 ' <span class="muted small">' + cat.count + ' im Umkreis ' + (r.radius_m / 1000) + ' km</span></div>';
+      if (!cat.items.length) html += '<div class="muted small">nichts gefunden</div>';
+      cat.items.forEach((p, i) => {
+        html += '<div class="poi"><span class="poi-n" style="background:' + COLORS[key] + '">' + (i + 1) + '</span>' +
+                FI.esc(p.name) + ' ' + p.kind + '<span class="muted">' + p.m + ' m</span></div>';
+        L.marker([p.lat, p.lon], {icon: L.divIcon({className: "poi-pin", iconSize: [22, 22],
+          html: '<span style="background:' + COLORS[key] + '">' + (i + 1) + '</span>'})})
+          .bindTooltip(FI.esc(p.name) + ' · ' + p.m + ' m').addTo(map);
+      });
+      col.innerHTML = html;
+      box.appendChild(col);
+    }
+  } catch (e) { box.innerHTML = '<p class="muted small">Umgebungsdaten gerade nicht abrufbar.</p>'; }
+})();
+</script>
 {% endif %}
-<div class="card" style="margin-top:12px">
-  <h3 style="margin-top:0">Beschreibung</h3>
-  <pre>{{ l.raw_text }}</pre>
-</div>
 {% endblock %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "_table.html" import results_table %}
+{% block title %}{{ title }} – FernImmo{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% if srch %}{% set c = srch.criteria %}
+<div class="search-head">
+  <div class="search-head-title">
+    <span class="muted small">{{ "🔔 Suchauftrag" if srch.notify else "🔕 Suchauftrag (stumm)" }}{% if not srch.active %} · ⏸ pausiert{% endif %}</span>
+    <h2>{{ srch.name }}</h2>
+  </div>
+  <div class="chips">
+    <span class="chip">{{ c.listing_types|map("replace", "kauf", "Kauf")|map("replace", "miete", "Miete")|join(" & ") }}</span>
+    {% if c.rooms_min or c.rooms_max %}<span class="chip">Zimmer: {{ ("%g"|format(c.rooms_min)).replace(".", ",") if c.rooms_min else "…" }} – {{ ("%g"|format(c.rooms_max)).replace(".", ",") if c.rooms_max else "…" }}</span>{% endif %}
+    {% if c.price_max %}<span class="chip">bis {{ c.price_max|num(" €") }}</span>{% endif %}
+    {% if c.area_min or c.area_max %}<span class="chip">Fläche: {{ c.area_min|int if c.area_min else "…" }} – {{ c.area_max|int if c.area_max else "…" }} m²</span>{% endif %}
+    {% if c.year_min %}<span class="chip">Baujahr ab {{ c.year_min|int }}</span>{% endif %}
+    <span class="chip">Heizung: {{ {"fernwaerme": "Fernwärme", "fern_nah": "Fern-/Nahwärme"}.get("fern_nah" if "nahwaerme" in c.heating_required else ("fernwaerme" if c.heating_required else ""), "egal") }}</span>
+    <span class="chip">Gebiet: {{ (srch.plz|join(", ")) if srch.plz else "" }}{{ " + " if srch.plz and srch.n_areas }}{{ (srch.n_areas ~ " Fläche(n)") if srch.n_areas }}{{ "bundesweit" if not srch.plz and not srch.n_areas }}</span>
+    {% if c.exclude_flags %}<span class="chip">ohne: {{ c.exclude_flags|join(", ") }}</span>{% endif %}
+  </div>
+  <div class="head-actions">
+    <a class="btn-like" href="/karte?search={{ srch.id }}&match={{ level }}">🗺 Karte</a>
+    <a class="btn-like primary" href="/suche?id={{ srch.id }}">✎ Suche bearbeiten</a>
+  </div>
+</div>
+<form class="filter-row" method="get">
+  <label class="inline">Treffer
+    <select name="level" onchange="this.form.submit()">
+      {% for v, t in [("treffer", "Voll + möglich"), ("voll", "Nur Volltreffer (Fernwärme bestätigt)"), ("teilweise", "Nur mögliche (Heizung unklar)")] %}
+      <option value="{{ v }}" {{ "selected" if level == v }}>{{ t }}</option>{% endfor %}
+    </select></label>
+  <label class="inline"><input type="checkbox" name="offline" value="1" {{ "checked" if offline }} onchange="this.form.submit()"> auch offline</label>
+  <label class="inline"><input type="checkbox" name="hidden" value="1" {{ "checked" if hidden }} onchange="this.form.submit()"> nur ausgeblendete</label>
+</form>
+{% else %}
+<div class="search-head">
+  <div class="search-head-title"><span class="muted small">Schnellsuche über alle gesammelten Inserate</span><h2>{{ title }}</h2></div>
+  <div class="chips">{% for c in chips %}<span class="chip">{{ c }}</span>{% endfor %}</div>
+  <div class="head-actions"><a class="btn-like" href="/">← Neue Schnellsuche</a></div>
+</div>
+{% endif %}
+{{ results_table(rows, sum, financing, export_q) }}
+{% endblock %}

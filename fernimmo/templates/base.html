@@ -9,23 +9,33 @@
 <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 <meta name="theme-color" content="#0b2545">
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/fernimmo.css?v=3">
+<link rel="stylesheet" href="/static/fernimmo.css?v=6">
 </head>
 <body>
 <header class="top">
   <a class="logo" href="/"><img src="/static/icons/icon-192.png" alt="">FernImmo</a>
   {% set path = request.url.path if request else "" %}
+  {% set nc = nav_counts(user) if user else {"new": 0, "objects": 0} %}
   <nav>
-    {% for href, label in [("/", "Inserate"), ("/karte", "Karte"), ("/suche", "Suchen"), ("/markt", "Markt"), ("/runs", "Suchläufe")] %}
-    <a href="{{ href }}" class="{{ 'on' if (path == href or (href != '/' and path.startswith(href)) or (href == '/' and path.startswith('/listing'))) }}">{{ label }}</a>
-    {% endfor %}
+    <a href="/" class="{{ 'on' if path == '/' or path.startswith('/objekte') }}">Suche</a>
+    <a href="/suchen" class="{{ 'on' if path.startswith('/suchen') or path == '/suche' }}">Meine Suchen{% if nc.new %} <span class="nav-badge">{{ nc.new }}</span>{% endif %}</a>
+    <a href="/merkliste" class="{{ 'on' if path.startswith('/merkliste') }}">Meine Objekte{% if nc.objects %} <span class="nav-badge muted-badge">{{ nc.objects }}</span>{% endif %}</a>
+    <a href="/markt" class="{{ 'on' if path.startswith('/markt') }}">Statistiken</a>
+    <details class="nav-more {{ 'on' if path in ('/karte', '/liste', '/runs') }}">
+      <summary>Mehr ▾</summary>
+      <div class="nav-menu">
+        <a href="/karte">🗺 Karte</a>
+        <a href="/liste">☰ Inserate als Liste (mit Kommentaren)</a>
+        <a href="/runs">⟳ Suchläufe</a>
+      </div>
+    </details>
   </nav>
   {% if user %}<span class="who">angemeldet als <b>{{ user }}</b></span>{% endif %}
   <a href="fernimmo-app://settings" id="app-settings" class="who" hidden>⚙ App</a>
   <script>if (navigator.userAgent.includes("FernImmoApp")) document.getElementById("app-settings").hidden = false;</script>
   <form method="post" action="/run"><button class="btn-run">Jetzt suchen</button></form>
 </header>
-<main>{% block content %}{% endblock %}</main>
+<main class="{% block main_class %}{% endblock %}">{% block content %}{% endblock %}</main>
 <script>
 // Am Handy Filter eingeklappt starten
 if (matchMedia("(max-width: 640px)").matches) document.querySelectorAll("details.filter-box").forEach(d => d.open = false);
