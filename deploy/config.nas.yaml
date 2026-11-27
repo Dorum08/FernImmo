@@ -1,0 +1,39 @@
+# Kompakte Konfiguration für das NAS (Portainer). Als /volume1/Docker/fernimmo/config.yaml ablegen.
+# Alle weiteren Einstellungen: siehe config.example.yaml. Suchen pflegst du danach in der Weboberfläche.
+# public_url unten auf die IP deines NAS anpassen.
+db_path: data/fernimmo.db
+timezone: Europe/Berlin
+interval_minutes: 20
+quiet_hours: [1, 6]
+map_center: [49.4521, 11.0767]
+map_zoom: 11
+
+sources:
+  kleinanzeigen:
+    urls:
+      - url: https://www.kleinanzeigen.de/s-wohnung-kaufen/nuernberg/anzeige:angebote/c196l976
+        type: kauf
+  immowelt:
+    urls:
+      - url: https://www.immowelt.de/classified-search?distributionTypes=Buy&estateTypes=Apartment&locations=AD08DE6345&numberOfRoomsMax=2
+        type: kauf
+
+profiles:
+  - name: Nürnberg Fernwärme
+    listing_types: [kauf]
+    rooms_min: 1
+    rooms_max: 2
+    heating_required: [fernwaerme]
+    plz: ["904"]
+    exclude_flags: [gesuch, versteigerung]
+
+notify:
+  telegram:
+    enabled: ${TELEGRAM_ENABLED:-false}
+    bot_token: ${TELEGRAM_BOT_TOKEN}
+    chat_id: ${TELEGRAM_CHAT_ID}
+
+web:
+  users:
+    ich: ${WEB_PASSWORD}
+  public_url: http://192.168.178.20:18451

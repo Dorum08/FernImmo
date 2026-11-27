@@ -1,6 +1,6 @@
 # FernImmo als Portainer-Stack (z. B. auf einem Asustor-NAS).
 # In Portainer: Stacks → Add stack → Web editor → diesen Inhalt einfügen.
-# Vorher den Ordner /volume1/Docker/fernimmo mit config.yaml anlegen (siehe README).
+# Vorher den Ordner /volume1/Docker/fernimmo mit config.yaml anlegen (Vorlage: deploy/config.nas.yaml).
 services:
   fernimmo:
     image: ghcr.io/dorum08/fernimmo:latest
