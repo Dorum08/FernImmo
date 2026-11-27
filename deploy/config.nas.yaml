@@ -1,4 +1,4 @@
-# Kompakte Konfiguration für das NAS (Portainer). Als /volume1/Docker/fernimmo/config.yaml ablegen.
+# Kompakte Konfiguration für das NAS (Portainer): /volume1/Dockerdaten/FernImmo/config/config.yaml
 # Alle weiteren Einstellungen: siehe config.example.yaml. Suchen pflegst du danach in der Weboberfläche.
 # public_url unten auf die IP deines NAS anpassen.
 db_path: data/fernimmo.db
@@ -37,4 +37,4 @@ notify:
 web:
   users:
     ich: ${WEB_PASSWORD}
-  public_url: http://192.168.178.20:18451
+  public_url: http://192.168.178.38:18451
